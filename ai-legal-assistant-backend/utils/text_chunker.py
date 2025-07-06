@@ -1,136 +1,155 @@
 import re
-from typing import List
+from typing import List, Dict, Optional
+import tiktoken
+from config.settings import settings
 
 class TextChunker:
-    """Utility for chunking text into smaller segments for embedding."""
+    """Advanced text chunking with overlap and metadata preservation."""
     
-    def chunk_text(self, text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+    def __init__(self):
+        self.chunk_size = settings.chunk_size  # 1000 tokens
+        self.chunk_overlap = settings.chunk_overlap  # 200 tokens
+        self.encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 tokenizer
+    
+    def chunk_text(self, text: str, document_metadata: Dict = None) -> List[Dict]:
         """
-        Split text into overlapping chunks.
+        Split text into overlapping chunks with metadata.
         
         Args:
             text: Input text to chunk
-            chunk_size: Maximum characters per chunk
-            chunk_overlap: Number of overlapping characters between chunks
+            document_metadata: Document-level metadata
             
         Returns:
-            List of text chunks
+            List of chunk dictionaries with text and metadata
         """
-        if not text or not text.strip():
-            return []
+        # Clean and normalize text
+        cleaned_text = self._clean_text(text)
         
-        # Clean text
-        text = self._clean_text(text)
+        # Split into sentences for better chunking boundaries
+        sentences = self._split_into_sentences(cleaned_text)
         
-        # Try to split by sentences first
-        sentences = self._split_into_sentences(text)
-        
+        # Create chunks
         chunks = []
         current_chunk = ""
+        current_tokens = 0
+        chunk_index = 0
         
         for sentence in sentences:
-            # If adding this sentence would exceed chunk size
-            if len(current_chunk) + len(sentence) > chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
+            sentence_tokens = len(self.encoding.encode(sentence))
+            
+            # If adding this sentence would exceed chunk size, finalize current chunk
+            if current_tokens + sentence_tokens > self.chunk_size and current_chunk:
+                # Create chunk with metadata
+                chunk_data = self._create_chunk_metadata(
+                    current_chunk.strip(),
+                    chunk_index,
+                    document_metadata
+                )
+                chunks.append(chunk_data)
                 
                 # Start new chunk with overlap
-                overlap_text = self._get_overlap_text(current_chunk, chunk_overlap)
-                current_chunk = overlap_text + sentence
+                overlap_text = self._get_overlap_text(current_chunk)
+                current_chunk = overlap_text + " " + sentence
+                current_tokens = len(self.encoding.encode(current_chunk))
+                chunk_index += 1
             else:
-                current_chunk += " " + sentence if current_chunk else sentence
+                current_chunk += " " + sentence
+                current_tokens += sentence_tokens
         
-        # Add the last chunk
+        # Add final chunk
         if current_chunk.strip():
-            chunks.append(current_chunk.strip())
+            chunk_data = self._create_chunk_metadata(
+                current_chunk.strip(),
+                chunk_index,
+                document_metadata
+            )
+            chunks.append(chunk_data)
         
-        # Handle very long sentences that exceed chunk_size
-        final_chunks = []
-        for chunk in chunks:
-            if len(chunk) <= chunk_size:
-                final_chunks.append(chunk)
-            else:
-                # Split long chunks by words
-                sub_chunks = self._split_long_chunk(chunk, chunk_size, chunk_overlap)
-                final_chunks.extend(sub_chunks)
-        
-        return final_chunks
+        return chunks
     
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
         # Remove excessive whitespace
         text = re.sub(r'\s+', ' ', text)
-        
-        # Remove special characters but keep punctuation
-        text = re.sub(r'[^\w\s\.\,\!\?\;\:\-\(\)\[\]\{\}\"\'\/]', '', text)
-        
+        # Remove special characters but keep legal punctuation
+        text = re.sub(r'[^\w\s\.\,\;\:\!\?\-\(\)\[\]\"\']+', ' ', text)
         return text.strip()
     
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences."""
-        # Simple sentence splitting on periods, exclamation marks, and question marks
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        """Split text into sentences while preserving legal document structure."""
+        # Handle legal document patterns
+        text = re.sub(r'(\w)\.(\s+)([A-Z])', r'\1.\2\3', text)
+        
+        # Split on sentence boundaries
+        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
         return [s.strip() for s in sentences if s.strip()]
     
-    def _get_overlap_text(self, text: str, overlap_size: int) -> str:
-        """Get the last part of text for overlap."""
-        if len(text) <= overlap_size:
-            return text
+    def _get_overlap_text(self, chunk: str) -> str:
+        """Get overlap text from the end of current chunk."""
+        tokens = self.encoding.encode(chunk)
+        if len(tokens) <= self.chunk_overlap:
+            return chunk
         
-        # Try to find a good break point (end of sentence)
-        overlap_text = text[-overlap_size:]
-        
-        # Find the first sentence end in the overlap
-        match = re.search(r'[.!?]\s+', overlap_text)
-        if match:
-            return overlap_text[match.end():]
-        
-        return overlap_text
+        overlap_tokens = tokens[-self.chunk_overlap:]
+        return self.encoding.decode(overlap_tokens)
     
-    def _split_long_chunk(self, chunk: str, chunk_size: int, chunk_overlap: int) -> List[str]:
-        """Split a chunk that's too long into smaller pieces."""
-        words = chunk.split()
-        chunks = []
-        current_chunk = []
-        current_length = 0
-        
-        for word in words:
-            word_length = len(word) + 1  # +1 for space
-            
-            if current_length + word_length > chunk_size and current_chunk:
-                chunks.append(' '.join(current_chunk))
-                
-                # Create overlap
-                overlap_words = self._get_overlap_words(current_chunk, chunk_overlap)
-                current_chunk = overlap_words + [word]
-                current_length = sum(len(w) + 1 for w in current_chunk)
-            else:
-                current_chunk.append(word)
-                current_length += word_length
-        
-        if current_chunk:
-            chunks.append(' '.join(current_chunk))
-        
-        return chunks
+    def _create_chunk_metadata(self, chunk_text: str, chunk_index: int, 
+                              document_metadata: Dict = None) -> Dict:
+        """Create chunk with comprehensive metadata."""
+        return {
+            "chunk_text": chunk_text,
+            "chunk_index": chunk_index,
+            "token_count": len(self.encoding.encode(chunk_text)),
+            "character_count": len(chunk_text),
+            "word_count": len(chunk_text.split()),
+            "document_metadata": document_metadata or {},
+            "chapter_title": self._extract_chapter_info(chunk_text),
+            "section_title": self._extract_section_info(chunk_text),
+            "keywords": self._extract_keywords(chunk_text)
+        }
     
-    def _get_overlap_words(self, words: List[str], overlap_size: int) -> List[str]:
-        """Get overlap words from the end of current chunk."""
-        text = ' '.join(words)
-        if len(text) <= overlap_size:
-            return words
+    def _extract_chapter_info(self, text: str) -> Optional[str]:
+        """Extract chapter information from text."""
+        chapter_patterns = [
+            r'CHAPTER\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)',
+            r'Chapter\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)',
+            r'SECTION\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)'
+        ]
         
-        # Get words that fit in overlap size
-        overlap_words = []
-        current_length = 0
+        for pattern in chapter_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0).strip()
+        return None
+    
+    def _extract_section_info(self, text: str) -> Optional[str]:
+        """Extract section information from text."""
+        section_patterns = [
+            r'Section\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)',
+            r'Subsection\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)',
+            r'Article\s+(\d+|[IVX]+)\s*[:\-]?\s*([^\n]+)'
+        ]
         
-        for word in reversed(words):
-            word_length = len(word) + 1
-            if current_length + word_length <= overlap_size:
-                overlap_words.insert(0, word)
-                current_length += word_length
-            else:
-                break
+        for pattern in section_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0).strip()
+        return None
+    
+    def _extract_keywords(self, text: str) -> List[str]:
+        """Extract legal keywords from text."""
+        legal_keywords = [
+            'contract', 'agreement', 'liability', 'damages', 'penalty',
+            'violation', 'offense', 'regulation', 'statute', 'law',
+            'court', 'judge', 'jury', 'evidence', 'testimony',
+            'plaintiff', 'defendant', 'prosecution', 'defense'
+        ]
         
-        return overlap_words
-
-# Global instance
-text_chunker = TextChunker()
+        found_keywords = []
+        text_lower = text.lower()
+        
+        for keyword in legal_keywords:
+            if keyword in text_lower:
+                found_keywords.append(keyword)
+        
+        return found_keywords
