@@ -552,3 +552,117 @@ async def delete_document(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+@app.get("/api/documents/{document_id}")
+async def get_document(
+    document_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get a specific document by ID"""
+    try:
+        supabase = get_supabase_client()
+        
+        # Get document with access control
+        result = supabase.table('documents').select(
+            'id, title, file_name, file_size, file_type, upload_date, '
+            'processing_status, is_public, document_category, metadata'
+        ).eq('id', document_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        document = result.data[0]
+        
+        # Check if user has access to this document
+        if not document['is_public'] and document.get('user_id') != current_user.id:
+            # Check if user is admin for private documents
+            is_admin = await verify_admin_role(current_user.id)
+            if not is_admin:
+                raise HTTPException(status_code=403, detail="Access denied")
+        
+        return {
+            "status": "success",
+            "document": {
+                "id": document["id"],
+                "title": document["title"],
+                "file_name": document["file_name"],
+                "file_size": document["file_size"],
+                "file_type": document["file_type"],
+                "upload_date": document["upload_date"],
+                "processing_status": document["processing_status"],
+                "is_public": document["is_public"],
+                "document_category": document.get("document_category"),
+                "metadata": document.get("metadata", {}),
+                "source_type": "public" if document["is_public"] else "user"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")    
+    
+@app.get("/api/documents")
+async def list_user_documents(
+    current_user = Depends(get_current_user)
+):
+    """List all documents accessible to the user"""
+    try:
+        supabase = get_supabase_client()
+        
+        # Get user's own documents + public documents
+        result = supabase.table('documents').select(
+            'id, title, file_name, file_size, file_type, upload_date, '
+            'processing_status, is_public, document_category, metadata'
+        ).or_(
+            f'user_id.eq.{current_user.id},and(is_public.eq.true,is_active.eq.true)'
+        ).order('upload_date', desc=True).execute()
+        
+        documents = []
+        for doc in result.data or []:
+            documents.append({
+                "id": doc["id"],
+                "title": doc["title"],
+                "file_name": doc["file_name"],
+                "file_size": doc["file_size"],
+                "file_type": doc["file_type"],
+                "upload_date": doc["upload_date"],
+                "processing_status": doc["processing_status"],
+                "is_public": doc["is_public"],
+                "document_category": doc.get("document_category"),
+                "source_type": "public" if doc["is_public"] else "user"
+            })
+        
+        return {
+            "status": "success",
+            "documents": documents,
+            "total": len(documents)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document(
+    document_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a document"""
+    try:
+        success = await vector_store.delete_document(document_id, current_user.id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Document not found or access denied")
+        
+        return {
+            "status": "success",
+            "message": "Document deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")    

@@ -15,7 +15,7 @@ class RAGService:
     def __init__(self):
         """Initialize RAG service."""
         genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.prompt_templates = PromptTemplates()
         self.embedding_service = EmbeddingService()
         self.vector_store = VectorStore()
@@ -112,7 +112,7 @@ class RAGService:
                                      session_id: str = None,
                                      include_public: bool = True,
                                      include_user_docs: bool = True,
-                                     conversation_history: Optional[List[Dict]] = None) -> Dict:
+                                     conversation_history: str = "") -> Dict:
         """
         Generate response using hybrid search across multiple sources.
         
@@ -128,12 +128,15 @@ class RAGService:
             Generated response with categorized sources
         """
         try:
-            # Generate query embedding
-            query_embedding = await self.embedding_service.generate_query_embedding(query)
+            # Import here to avoid circular imports
+            from services.hybrid_search_service import HybridSearchService
+            
+            # Initialize hybrid search service
+            hybrid_search = HybridSearchService()
             
             # Perform hybrid search
-            search_results = await self.vector_store.hybrid_similarity_search(
-                query_embedding=query_embedding,
+            search_results = await hybrid_search.hybrid_search(
+                query=query,
                 user_id=user_id,
                 include_public=include_public,
                 include_user_docs=include_user_docs,
@@ -141,45 +144,35 @@ class RAGService:
                 limit=settings.top_k
             )
             
-            # Build hybrid context from multiple sources
-            context = self._build_hybrid_context(search_results)
+            # Extract relevant chunks from search results
+            relevant_chunks = search_results.get('results', [])
+
+            # Build context from multiple sources
+            context = self._build_hybrid_context(relevant_chunks)
             
-            # Build conversation context
-            conversation_context = ""
-            if conversation_history:
-                conversation_context = self._build_conversation_context(conversation_history)
+            # Get session context if available
+            session_context = search_results.get('session_context', '')
             
-            # Generate response with hybrid context
+            # Generate response using Gemini with hybrid context
             response = await self._generate_with_hybrid_context(
                 query=query,
                 context=context,
-                conversation_context=conversation_context
+                session_context=session_context,
+                conversation_history=conversation_history
             )
             
-            # Prepare response with categorized sources
+            # Prepare response with source attribution
             return {
                 'response': response,
-                'sources': self._format_hybrid_sources(search_results),
-                'context_used': self._has_context(search_results),
-                'source_breakdown': {
-                    'public_sources': len(search_results.get('public_results', [])),
-                    'user_sources': len(search_results.get('user_results', [])),
-                    'session_sources': len(search_results.get('session_results', []))
-                }
+                'sources': relevant_chunks,
+                'source_breakdown': search_results.get('source_breakdown', {}),
+                'session_context_used': bool(session_context),
+                'search_params': search_results.get('search_params', {})
             }
             
         except Exception as e:
             logger.error(f"Error generating hybrid response: {str(e)}")
-            return {
-                'response': 'I apologize, but I encountered an error processing your request. Please try again.',
-                'sources': [],
-                'context_used': False,
-                'source_breakdown': {
-                    'public_sources': 0,
-                    'user_sources': 0,
-                    'session_sources': 0
-                }
-            }
+            raise Exception(f"Failed to generate hybrid response: {str(e)}")
 
     async def _generate_with_context(self, query: str, context: str, 
                                    conversation_history: Optional[List[Dict]] = None) -> str:
@@ -213,48 +206,26 @@ class RAGService:
             return "I apologize, but I'm unable to generate a response at the moment. Please try again."
 
     async def _generate_with_hybrid_context(self, query: str, context: str, 
-                                          conversation_context: str = "") -> str:
-        """Generate response using Gemini with hybrid context from multiple sources."""
+                                          session_context: str = "",
+                                          conversation_history: str = "") -> str:
+        """Generate response using hybrid context with source attribution"""
         try:
-            # Create hybrid prompt template
-            prompt = f"""You are an expert Sri Lankan legal advisor. Based on the provided legal passages from multiple sources, answer the user's question accurately and comprehensively.
-
-{context}
-
-CONVERSATION CONTEXT:
-{conversation_context}
-
-USER QUESTION:
-{query}
-
-Instructions:
-1. Base your answer primarily on the provided legal passages
-2. Prioritize information from the common legal knowledge base for general legal principles
-3. Use user document context for specific case details and personal documents
-4. Use session documents for context specific to this conversation
-5. Clearly distinguish between general legal principles and document-specific information
-6. If information from different sources conflicts, explain the differences
-7. Maintain conversation context from previous messages
-8. If the passages don't contain sufficient information, clearly state this
-9. Provide specific legal references when available
-10. Use clear, accessible language while maintaining legal accuracy
-
-RESPONSE:"""
-
-            # Generate response
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=settings.temperature,
-                    max_output_tokens=2048,
-                )
+            # Create hybrid prompt
+            prompt = self.prompt_templates.create_hybrid_rag_prompt(
+                query=query,
+                context=context,
+                session_context=session_context,
+                conversation_history=conversation_history
             )
+            
+            # Generate response
+            response = self.model.generate_content(prompt)
             
             return response.text
             
         except Exception as e:
-            logger.error(f"Error generating with hybrid context: {str(e)}")
-            return "I apologize, but I'm unable to generate a response at the moment. Please try again."
+            logger.error(f"Error generating response with hybrid context: {str(e)}")
+            raise Exception(f"Failed to generate response: {str(e)}")
 
     def _build_context(self, relevant_chunks: List[Dict]) -> str:
         """Build context string from relevant chunks (legacy method)."""
@@ -272,40 +243,54 @@ RESPONSE:"""
         
         return "\n".join(context_parts)
 
-    def _build_hybrid_context(self, search_results: Dict) -> str:
-        """Build context from multiple sources with clear source attribution."""
+    def _build_hybrid_context(self, chunks: List[Dict]) -> str:
+        """Build context from multiple sources with source attribution"""
+        if not chunks:
+            return "No relevant information found in the documents."
+        
         context_parts = []
         
-        # Add public knowledge base results
-        if search_results.get('public_results'):
-            context_parts.append("=== COMMON LEGAL KNOWLEDGE BASE ===")
-            for i, result in enumerate(search_results['public_results'], 1):
-                category = result.get('document_category', 'General')
-                title = result.get('document_title', 'Unknown')
-                context_parts.append(f"[Public Source {i}: {title} - {category}]")
-                context_parts.append(result.get('chunk_content', ''))
-                context_parts.append("")
+        # Group chunks by source type
+        public_chunks = [c for c in chunks if c.get('source_type') == 'public']
+        user_chunks = [c for c in chunks if c.get('source_type') == 'user']
+        session_chunks = [c for c in chunks if c.get('source_type') == 'session']
         
-        # Add user document results
-        if search_results.get('user_results'):
-            context_parts.append("=== YOUR PERSONAL DOCUMENTS ===")
-            for i, result in enumerate(search_results['user_results'], 1):
-                title = result.get('document_title', 'Unknown')
-                context_parts.append(f"[Your Document {i}: {title}]")
-                context_parts.append(result.get('chunk_content', ''))
-                context_parts.append("")
+        # Add public knowledge base context
+        if public_chunks:
+            context_parts.append("=== LEGAL KNOWLEDGE BASE ===")
+            for chunk in public_chunks:
+                doc_title = chunk.get('document_title', 'Unknown Document')
+                category = chunk.get('document_category', 'General')
+                content = chunk.get('chunk_content', '')
+                
+                context_parts.append(f"Source: {doc_title} ({category})")
+                context_parts.append(f"Content: {content}")
+                context_parts.append("---")
         
-        # Add session-specific results
-        if search_results.get('session_results'):
-            context_parts.append("=== DOCUMENTS FROM THIS CONVERSATION ===")
-            for i, result in enumerate(search_results['session_results'], 1):
-                title = result.get('document_title', 'Unknown')
-                context_parts.append(f"[Session Document {i}: {title}]")
-                context_parts.append(result.get('chunk_content', ''))
-                context_parts.append("")
+        # Add user document context
+        if user_chunks and len(user_chunks) < 3:  # Threshold for "limited content"
+            context_parts.append("=== DOCUMENT ANALYSIS ===")
+            context_parts.append("Based on available sections from your document and related legal resources:")
+        else:
+            context_parts.append("=== YOUR DOCUMENTS ===")
+            for chunk in user_chunks:
+                doc_title = chunk.get('document_title', 'Unknown Document')
+                content = chunk.get('chunk_content', '')
+                
+                context_parts.append(f"Source: {doc_title}")
+                context_parts.append(f"Content: {content}")
+                context_parts.append("---")
         
-        if not context_parts:
-            return "No relevant context found in any available documents."
+        # Add session-specific context
+        if session_chunks:
+            context_parts.append("=== CURRENT SESSION DOCUMENTS ===")
+            for chunk in session_chunks:
+                doc_title = chunk.get('document_title', 'Unknown Document')
+                content = chunk.get('chunk_content', '')
+                
+                context_parts.append(f"Source: {doc_title}")
+                context_parts.append(f"Content: {content}")
+                context_parts.append("---")
         
         return "\n".join(context_parts)
     

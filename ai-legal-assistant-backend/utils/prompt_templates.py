@@ -64,3 +64,45 @@ Document content:
 {document_text}
 
 Analysis:"""
+    
+    def create_hybrid_rag_prompt(self, query: str, context: str, 
+                               session_context: str = "", 
+                               conversation_history: str = "") -> str:
+        """Create a prompt for hybrid RAG-based question answering with multiple sources"""
+        
+        base_prompt = """You are an expert Sri Lankan legal advisor with access to both the common legal knowledge base and user-specific documents. You should provide accurate, comprehensive responses based on the provided context from multiple sources.
+
+IMPORTANT GUIDELINES:
+1. Use information from the Legal Knowledge Base for general legal principles and authoritative guidance
+2. Use information from user documents for specific case details and document analysis
+3. Use current session documents for contextual relevance to the ongoing conversation
+4. Clearly distinguish between general legal principles and document-specific information
+5. Always cite your sources and specify whether information comes from the legal knowledge base or user documents
+6. If information conflicts between sources, explain the differences and provide guidance
+7. Be precise and professional in your language
+8. If the context doesn't contain sufficient information, clearly state limitations
+
+"""
+
+        if conversation_history:
+            base_prompt += f"\nCONVERSATION HISTORY:\n{conversation_history}\n"
+        
+        if session_context:
+            base_prompt += f"\nCURRENT SESSION CONTEXT:\n{session_context}\n"
+        
+        base_prompt += f"""
+AVAILABLE CONTEXT FROM MULTIPLE SOURCES:
+{context}
+
+USER QUESTION: {query}
+
+Please provide a comprehensive response based on the available context. When referencing information:
+- Use [Legal Knowledge Base] for information from the common legal database
+- Use [Your Document: filename] for information from user-uploaded documents
+- Use [Session Document: filename] for information from documents in the current session
+
+If you need to reference specific legal procedures or requirements not covered in the provided context, suggest consulting with a qualified attorney.
+
+RESPONSE:"""
+
+        return base_prompt

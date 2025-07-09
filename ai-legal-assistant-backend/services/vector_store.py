@@ -203,7 +203,7 @@ class VectorStore:
             # Search public documents
             if include_public:
                 results['public_results'] = await self.search_public_documents(
-                    query_embedding, document_categories, limit//2, similarity_threshold
+                    query_embedding, limit//2, similarity_threshold
                 )
             
             # Search user documents
@@ -224,94 +224,145 @@ class VectorStore:
             logger.error(f"Error in hybrid similarity search: {str(e)}")
             raise Exception(f"Failed to perform hybrid similarity search: {str(e)}")
 
-    async def search_public_documents(self, query_embedding: List[float], 
-                                    categories: List[str] = None,
-                                    limit: int = 5,
-                                    similarity_threshold: float = 0.7) -> List[Dict]:
-        """Search only public documents in knowledge base."""
+    async def search_public_documents(self, query_embedding: List[float], limit: int = 5) -> List[Dict]:
+        """Search public documents (common knowledge base)"""
         try:
-            # For now, we'll use a simplified search since pgvector requires specific setup
-            # In production, you'd use proper vector similarity search
+            # Convert embedding to string format for pgvector
+            embedding_str = str(query_embedding)
             
-            query_builder = self.supabase.table('document_chunks').select(
-                'id, document_id, chunk_content, chunk_index, token_count, '
-                'page_number, chapter_title, section_title, metadata, '
-                'documents!inner(title, file_name, document_category, is_public, is_active)'
-            ).eq('documents.is_public', True).eq('documents.is_active', True)
+            # Search using RPC function for vector similarity
+            result = self.supabase.rpc('search_public_documents', {
+                'query_embedding': embedding_str,
+                'match_threshold': 0.7,
+                'match_count': limit
+            }).execute()
             
-            if categories:
-                query_builder = query_builder.in_('documents.document_category', categories)
+            if result.data:
+                return result.data
             
-            result = query_builder.limit(limit).execute()
+            # Fallback to regular query if RPC doesn't exist
+            result = self.supabase.table('document_chunks').select(
+                'id, document_id, chunk_content, chunk_index, page_number, '
+                'chapter_title, section_title, metadata, '
+                'documents!inner(id, title, file_name, document_category, is_public, is_active)'
+            ).eq('documents.is_public', True).eq('documents.is_active', True).limit(limit).execute()
             
-            if not result.data:
-                return []
+            # Add similarity scores (would be calculated by RPC in production)
+            chunks = []
+            for chunk in result.data or []:
+                chunks.append({
+                    'id': chunk['id'],
+                    'document_id': chunk['document_id'],
+                    'chunk_content': chunk['chunk_content'],
+                    'chunk_index': chunk['chunk_index'],
+                    'page_number': chunk['page_number'],
+                    'chapter_title': chunk['chapter_title'],
+                    'section_title': chunk['section_title'],
+                    'metadata': chunk['metadata'],
+                    'document_title': chunk['documents']['title'],
+                    'document_category': chunk['documents']['document_category'],
+                    'similarity': 0.8,  # Default similarity score
+                    'source_type': 'public'
+                })
             
-            # Add source type to results
-            for item in result.data:
-                item['source_type'] = 'public'
-                item['document_title'] = item['documents']['title']
-                item['document_category'] = item['documents']['document_category']
-                # For now, assign a mock similarity score
-                item['similarity_score'] = 0.8
-            
-            return result.data
+            logger.info(f"Found {len(chunks)} public document chunks")
+            return chunks
             
         except Exception as e:
-            logger.error(f"Error searching public documents: {str(e)}")
+            logger.error(f"vector Error searching public documents: {str(e)}")
             return []
 
-    async def search_user_documents(self, query_embedding: List[float], 
-                                  user_id: str,
-                                  limit: int = 5,
-                                  similarity_threshold: float = 0.7) -> List[Dict]:
-        """Search only user's private documents."""
+    async def search_user_documents(self, query_embedding: List[float], user_id: str, limit: int = 5) -> List[Dict]:
+        """Search user's private documents"""
         try:
+            # Convert embedding to string format for pgvector
+            embedding_str = str(query_embedding)
+            
+            # Search using RPC function for vector similarity
+            result = self.supabase.rpc('search_user_documents', {
+                'query_embedding': embedding_str,
+                'user_id': user_id,
+                'match_threshold': 0.7,
+                'match_count': limit
+            }).execute()
+            
+            if result.data:
+                return result.data
+            
+            # Fallback to regular query if RPC doesn't exist
             result = self.supabase.table('document_chunks').select(
-                'id, document_id, chunk_content, chunk_index, token_count, '
-                'page_number, chapter_title, section_title, metadata, '
-                'documents!inner(title, file_name, user_id, is_public)'
+                'id, document_id, chunk_content, chunk_index, page_number, '
+                'chapter_title, section_title, metadata, '
+                'documents!inner(id, title, file_name, user_id, is_public)'
             ).eq('documents.user_id', user_id).eq('documents.is_public', False).limit(limit).execute()
             
-            if not result.data:
-                return []
+            # Add similarity scores
+            chunks = []
+            for chunk in result.data or []:
+                chunks.append({
+                    'id': chunk['id'],
+                    'document_id': chunk['document_id'],
+                    'chunk_content': chunk['chunk_content'],
+                    'chunk_index': chunk['chunk_index'],
+                    'page_number': chunk['page_number'],
+                    'chapter_title': chunk['chapter_title'],
+                    'section_title': chunk['section_title'],
+                    'metadata': chunk['metadata'],
+                    'document_title': chunk['documents']['title'],
+                    'similarity': 0.8,  # Default similarity score
+                    'source_type': 'user'
+                })
             
-            # Add source type to results
-            for item in result.data:
-                item['source_type'] = 'user'
-                item['document_title'] = item['documents']['title']
-                # For now, assign a mock similarity score
-                item['similarity_score'] = 0.75
-            
-            return result.data
+            logger.info(f"Found {len(chunks)} user document chunks")
+            return chunks
             
         except Exception as e:
             logger.error(f"Error searching user documents: {str(e)}")
             return []
 
-    async def search_session_documents(self, query_embedding: List[float], 
-                                     session_id: str,
-                                     limit: int = 3,
-                                     similarity_threshold: float = 0.7) -> List[Dict]:
-        """Search documents uploaded in specific chat session."""
+    async def search_session_documents(self, query_embedding: List[float], session_id: str, limit: int = 5) -> List[Dict]:
+        """Search documents uploaded in current session"""
         try:
+            # Convert embedding to string format for pgvector
+            embedding_str = str(query_embedding)
+            
+            # Search using RPC function for vector similarity
+            result = self.supabase.rpc('search_session_documents', {
+                'query_embedding': embedding_str,
+                'session_id': session_id,
+                'match_threshold': 0.7,
+                'match_count': limit
+            }).execute()
+            
+            if result.data:
+                return result.data
+            
+            # Fallback to regular query if RPC doesn't exist
             result = self.supabase.table('document_chunks').select(
-                'id, document_id, chunk_content, chunk_index, token_count, '
-                'page_number, chapter_title, section_title, metadata, '
-                'documents!inner(title, file_name, chat_session_id)'
+                'id, document_id, chunk_content, chunk_index, page_number, '
+                'chapter_title, section_title, metadata, '
+                'documents!inner(id, title, file_name, chat_session_id)'
             ).eq('documents.chat_session_id', session_id).limit(limit).execute()
             
-            if not result.data:
-                return []
+            # Add similarity scores
+            chunks = []
+            for chunk in result.data or []:
+                chunks.append({
+                    'id': chunk['id'],
+                    'document_id': chunk['document_id'],
+                    'chunk_content': chunk['chunk_content'],
+                    'chunk_index': chunk['chunk_index'],
+                    'page_number': chunk['page_number'],
+                    'chapter_title': chunk['chapter_title'],
+                    'section_title': chunk['section_title'],
+                    'metadata': chunk['metadata'],
+                    'document_title': chunk['documents']['title'],
+                    'similarity': 0.8,  # Default similarity score
+                    'source_type': 'session'
+                })
             
-            # Add source type to results
-            for item in result.data:
-                item['source_type'] = 'session'
-                item['document_title'] = item['documents']['title']
-                # For now, assign a mock similarity score
-                item['similarity_score'] = 0.85
-            
-            return result.data
+            logger.info(f"Found {len(chunks)} session document chunks")
+            return chunks
             
         except Exception as e:
             logger.error(f"Error searching session documents: {str(e)}")
@@ -373,18 +424,13 @@ class VectorStore:
             logger.error(f"Error getting user documents: {str(e)}")
             return []
 
-    async def get_public_documents(self, category: str = None) -> List[Dict]:
-        """Get public documents from common knowledge base."""
+    async def get_public_documents(self) -> List[Dict]:
+        """Get all public documents for admin management"""
         try:
-            query_builder = self.supabase.table('documents').select(
-                'id, title, file_name, file_size, file_type, '
-                'processing_status, upload_date, document_category, metadata'
-            ).eq('is_public', True).eq('is_active', True)
-            
-            if category:
-                query_builder = query_builder.eq('document_category', category)
-            
-            result = query_builder.order('upload_date', desc=True).execute()
+            result = self.supabase.table('documents').select(
+                'id, title, file_name, file_size, file_type, document_category, '
+                'processing_status, is_active, upload_date, created_at, metadata'
+            ).eq('is_public', True).eq('uploaded_by_admin', True).order('created_at', desc=True).execute()
             
             return result.data or []
             
@@ -392,31 +438,31 @@ class VectorStore:
             logger.error(f"Error getting public documents: {str(e)}")
             return []
 
-    async def get_chat_session_documents(self, session_id: str) -> List[Dict]:
-        """Get documents uploaded in specific chat session."""
+    async def get_document_stats(self, document_id: str) -> Dict:
+        """Get statistics for a specific document"""
         try:
-            result = self.supabase.table('documents').select(
-                'id, title, file_name, file_size, file_type, '
-                'processing_status, upload_date, metadata'
-            ).eq('chat_session_id', session_id).order('upload_date', desc=True).execute()
+            # Get document info
+            doc_result = self.supabase.table('documents').select('*').eq('id', document_id).execute()
             
-            return result.data or []
+            if not doc_result.data:
+                return {}
+            
+            # Get chunk count
+            chunk_result = self.supabase.table('document_chunks').select('id', count='exact').eq('document_id', document_id).execute()
+            
+            document = doc_result.data[0]
+            return {
+                'document_id': document_id,
+                'title': document['title'],
+                'file_size': document['file_size'],
+                'file_type': document['file_type'],
+                'chunk_count': chunk_result.count,
+                'processing_status': document['processing_status'],
+                'upload_date': document['upload_date'],
+                'is_public': document['is_public'],
+                'metadata': document['metadata']
+            }
             
         except Exception as e:
-            logger.error(f"Error getting chat session documents: {str(e)}")
-            return []
-
-    async def delete_document(self, document_id: str, user_id: str) -> bool:
-        """Delete a document and its associated chunks."""
-        try:
-            # First delete chunks
-            self.supabase.table('document_chunks').delete().eq('document_id', document_id).execute()
-            
-            # Then delete document
-            result = self.supabase.table('documents').delete().eq('id', document_id).eq('user_id', user_id).execute()
-            
-            return len(result.data) > 0
-            
-        except Exception as e:
-            logger.error(f"Error deleting document: {str(e)}")
-            return False
+            logger.error(f"Error getting document stats: {str(e)}")
+            return {}
