@@ -219,7 +219,13 @@ class RAGService:
             )
             
             # Generate response
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.7,  # Slightly higher for more natural flow
+                    max_output_tokens=2048,
+                )
+            )
             
             return response.text
             
@@ -246,7 +252,7 @@ class RAGService:
     def _build_hybrid_context(self, chunks: List[Dict]) -> str:
         """Build context from multiple sources with source attribution"""
         if not chunks:
-            return "No relevant information found in the documents."
+            return "Based on general legal knowledge and procedures:"
         
         context_parts = []
         
@@ -268,10 +274,7 @@ class RAGService:
                 context_parts.append("---")
         
         # Add user document context
-        if user_chunks and len(user_chunks) < 3:  # Threshold for "limited content"
-            context_parts.append("=== DOCUMENT ANALYSIS ===")
-            context_parts.append("Based on available sections from your document and related legal resources:")
-        else:
+        if user_chunks:
             context_parts.append("=== YOUR DOCUMENTS ===")
             for chunk in user_chunks:
                 doc_title = chunk.get('document_title', 'Unknown Document')
