@@ -1,7 +1,7 @@
 import React, { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
-import { signIn, signInWithGoogle, clearError } from '../../features/auth/authSlice';
+import { signIn, clearError } from '../../features/auth/authSlice';
 import { supabase } from '../../lib/supabase';
 
 const Login: React.FC = () => {

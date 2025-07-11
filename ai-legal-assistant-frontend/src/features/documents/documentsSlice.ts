@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { ApiService } from '../../services/api';
 
 interface Document {
   id: string;
@@ -6,6 +7,7 @@ interface Document {
   status: string;
   upload_date: string;
   file_size: number;
+  source_type: string;
 }
 
 interface DocumentsState {
@@ -20,47 +22,18 @@ const initialState: DocumentsState = {
   error: null,
 };
 
-export const uploadDocument = createAsyncThunk(
-  'documents/upload',
-  async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await fetch('/api/documents/upload', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error('Upload failed');
-    }
-
-    return response.json();
-  }
-);
-
-export const fetchDocuments = createAsyncThunk(
-  'documents/fetchAll',
+export const loadDocuments = createAsyncThunk(
+  'documents/loadDocuments',
   async () => {
-    const response = await fetch('/api/documents');
-    if (!response.ok) {
-      throw new Error('Failed to fetch documents');
-    }
-    return response.json();
+    const response = await ApiService.getDocuments();
+    return response.documents || [];
   }
 );
 
 export const deleteDocument = createAsyncThunk(
-  'documents/delete',
+  'documents/deleteDocument',
   async (documentId: string) => {
-    const response = await fetch(`/api/documents/${documentId}`, {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      throw new Error('Delete failed');
-    }
-
+    await ApiService.deleteDocument(documentId);
     return documentId;
   }
 );
@@ -71,28 +44,17 @@ const documentsSlice = createSlice({
   reducers: {},
   extraReducers: (builder) => {
     builder
-      .addCase(uploadDocument.pending, (state) => {
+      .addCase(loadDocuments.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(uploadDocument.fulfilled, (state, action) => {
+      .addCase(loadDocuments.fulfilled, (state, action) => {
+        state.documents = action.payload;
         state.loading = false;
-        // Refresh documents list after upload
       })
-      .addCase(uploadDocument.rejected, (state, action) => {
+      .addCase(loadDocuments.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.error.message || 'Upload failed';
-      })
-      .addCase(fetchDocuments.pending, (state) => {
-        state.loading = true;
-      })
-      .addCase(fetchDocuments.fulfilled, (state, action) => {
-        state.loading = false;
-        state.documents = action.payload.documents || [];
-      })
-      .addCase(fetchDocuments.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.error.message || 'Failed to fetch documents';
+        state.error = action.error.message || 'Failed to load documents';
       })
       .addCase(deleteDocument.fulfilled, (state, action) => {
         state.documents = state.documents.filter(doc => doc.id !== action.payload);

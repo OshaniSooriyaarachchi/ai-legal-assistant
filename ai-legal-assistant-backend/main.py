@@ -7,12 +7,12 @@ import os
 import logging
 import time
 
-# Import your services
 from services.document_processor import DocumentProcessor
 from services.embedding_service import EmbeddingService
 from services.vector_store import VectorStore
 from services.rag_service import RAGService
 from config.supabase_client import get_supabase_client
+from config.settings import settings
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +29,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_origins=settings.get_allowed_origins_list(),  # Use settings
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

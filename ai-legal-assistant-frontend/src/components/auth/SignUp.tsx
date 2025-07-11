@@ -1,7 +1,7 @@
 import React, { useState, FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
-import { signUp, signInWithGoogle, clearError } from '../../features/auth/authSlice';
+import { signUp, clearError } from '../../features/auth/authSlice';
 import { supabase } from '../../lib/supabase';
 import { checkEmailExists } from '../../utils/authUtils';
 

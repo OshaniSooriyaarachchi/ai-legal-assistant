@@ -1,13 +1,13 @@
 import React, { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { fetchDocuments, deleteDocument } from '../features/documents/documentsSlice';
+import { loadDocuments, deleteDocument } from '../features/documents/documentsSlice';
 
 const DocumentList: React.FC = () => {
   const dispatch = useAppDispatch();
   const { documents, loading, error } = useAppSelector((state) => state.documents);
 
   useEffect(() => {
-    dispatch(fetchDocuments());
+    dispatch(loadDocuments());
   }, [dispatch]);
 
   const handleDelete = async (documentId: string) => {

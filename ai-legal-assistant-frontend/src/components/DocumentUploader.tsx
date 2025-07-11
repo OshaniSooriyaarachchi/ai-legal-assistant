@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppDispatch } from '../app/hooks';
-import { uploadDocument } from '../features/documents/documentsSlice';
+import { uploadDocument } from '../features/chat/chatSlice';
+import { loadDocuments } from '../features/documents/documentsSlice';
 
 const DocumentUploader: React.FC = () => {
   const dispatch = useAppDispatch();
@@ -23,6 +24,8 @@ const DocumentUploader: React.FC = () => {
     try {
       const result = await dispatch(uploadDocument(file)).unwrap();
       console.log('Upload successful:', result);
+      // Refresh the documents list
+      dispatch(loadDocuments());
     } catch (error) {
       console.error('Upload failed:', error);
     } finally {
