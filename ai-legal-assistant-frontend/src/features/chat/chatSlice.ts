@@ -31,6 +31,9 @@ interface ChatState {
   currentSessionId: string | null;
   loading: boolean;
   uploading: boolean;
+  isLoadingSessions: boolean;
+  isDeletingSession: boolean;
+  isClearingHistory: boolean;
   error: string | null;
 }
 
@@ -41,6 +44,9 @@ const initialState: ChatState = {
   currentSessionId: null,
   loading: false,
   uploading: false,
+  isLoadingSessions: false,
+  isDeletingSession: false,
+  isClearingHistory: false,
   error: null,
 };
 
@@ -95,10 +101,95 @@ export const loadChatHistory = createAsyncThunk(
   'chat/loadHistory',
   async (sessionId: string) => {
     const response = await ApiService.getChatHistory(sessionId);
+    const history = response.history || [];
+    
+    // Transform backend data to frontend Message format
+    const messages: Message[] = [];
+    
+    history.forEach((item: any) => {
+      // Handle new format (conversation type)
+      if (item.message_type === 'conversation') {
+        // Add user message
+        if (item.query_text) {
+          const userMsg = {
+            id: `${item.id}-user`,
+            content: item.query_text,
+            sender: 'user' as const,
+            timestamp: item.created_at,
+            type: 'text' as const
+          };
+          messages.push(userMsg);
+        }
+        
+        // Add assistant response
+        if (item.response_text) {
+          const assistantMsg = {
+            id: `${item.id}-assistant`,
+            content: item.response_text,
+            sender: 'assistant' as const,
+            timestamp: item.created_at,
+            type: 'text' as const
+          };
+          messages.push(assistantMsg);
+        }
+      }
+      // Handle old format (separate user_query and assistant_response)
+      else if (item.message_type === 'user_query' && item.query_text) {
+        const userMsg = {
+          id: `${item.id}-user`,
+          content: item.query_text,
+          sender: 'user' as const,
+          timestamp: item.created_at,
+          type: 'text' as const
+        };
+        messages.push(userMsg);
+      } 
+      else if (item.message_type === 'assistant_response' && item.response_text) {
+        const assistantMsg = {
+          id: `${item.id}-assistant`,
+          content: item.response_text,
+          sender: 'assistant' as const,
+          timestamp: item.created_at,
+          type: 'text' as const
+        };
+        messages.push(assistantMsg);
+      }
+      // Handle document uploads
+      else if (item.message_type === 'document_upload' && item.query_text) {
+        const docMsg = {
+          id: `${item.id}-document`,
+          content: item.query_text,
+          sender: 'assistant' as const,
+          timestamp: item.created_at,
+          type: 'document' as const
+        };
+        messages.push(docMsg);
+      }
+    });
+    
+    // Sort messages by timestamp to ensure proper order
+    messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
     return {
       sessionId,
-      messages: response.messages || []
+      messages
     };
+  }
+);
+
+export const deleteChatSession = createAsyncThunk(
+  'chat/deleteSession',
+  async (sessionId: string) => {
+    await ApiService.deleteChatSession(sessionId);
+    return sessionId;
+  }
+);
+
+export const clearChatHistory = createAsyncThunk(
+  'chat/clearHistory',
+  async (sessionId: string) => {
+    await ApiService.clearChatHistory(sessionId);
+    return sessionId;
   }
 );
 
@@ -106,7 +197,8 @@ const chatSlice = createSlice({
   name: 'chat',
   initialState,
   reducers: {
-    clearChat: (state) => {
+    clearChatLocal: (state) => {
+      // This is for local clearing only (e.g., when switching sessions)
       state.messages = [];
       state.uploadedDocuments = [];
     },
@@ -129,19 +221,31 @@ const chatSlice = createSlice({
     builder
       // Send message cases
       .addCase(sendMessage.pending, (state, action) => {
+        const timestamp = new Date().toISOString();
         const userMessage: Message = {
-          id: Date.now().toString(),
+          id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           content: action.meta.arg,
           sender: 'user',
-          timestamp: new Date().toISOString(),
+          timestamp,
         };
-        state.messages.push(userMessage);
+        
+        // Check if this exact message already exists to prevent duplicates
+        const isDuplicate = state.messages.some(msg => 
+          msg.content === userMessage.content && 
+          msg.sender === 'user' && 
+          Math.abs(new Date(msg.timestamp).getTime() - new Date(timestamp).getTime()) < 2000 // Within 2 seconds
+        );
+        
+        if (!isDuplicate) {
+          state.messages.push(userMessage);
+        }
+        
         state.loading = true;
         state.error = null;
       })
       .addCase(sendMessage.fulfilled, (state, action) => {
         const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
+          id: `assistant-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           content: action.payload.response,
           sender: 'assistant',
           timestamp: new Date().toISOString(),
@@ -179,16 +283,58 @@ const chatSlice = createSlice({
         state.currentSessionId = action.payload.id;
         state.messages = []; // Clear messages for new session
       })
+      .addCase(loadChatSessions.pending, (state) => {
+        state.isLoadingSessions = true;
+      })
       .addCase(loadChatSessions.fulfilled, (state, action) => {
         state.sessions = action.payload;
+        state.isLoadingSessions = false;
+      })
+      .addCase(loadChatSessions.rejected, (state) => {
+        state.isLoadingSessions = false;
       })
       .addCase(loadChatHistory.fulfilled, (state, action) => {
         if (action.payload.sessionId === state.currentSessionId) {
           state.messages = action.payload.messages;
         }
+      })
+      .addCase(deleteChatSession.pending, (state) => {
+        state.isDeletingSession = true;
+        state.error = null;
+      })
+      .addCase(deleteChatSession.fulfilled, (state, action) => {
+        // Remove the session from the sessions array
+        state.sessions = state.sessions.filter(session => session.id !== action.payload);
+        
+        // If the deleted session was the current session, clear it
+        if (state.currentSessionId === action.payload) {
+          state.currentSessionId = null;
+          state.messages = [];
+        }
+        
+        state.isDeletingSession = false;
+      })
+      .addCase(deleteChatSession.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to delete session';
+        state.isDeletingSession = false;
+      })
+      .addCase(clearChatHistory.pending, (state) => {
+        state.isClearingHistory = true;
+        state.error = null;
+      })
+      .addCase(clearChatHistory.fulfilled, (state, action) => {
+        // Clear messages for the session that was cleared
+        if (state.currentSessionId === action.payload) {
+          state.messages = [];
+        }
+        state.isClearingHistory = false;
+      })
+      .addCase(clearChatHistory.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to clear chat history';
+        state.isClearingHistory = false;
       });
   },
 });
 
-export const { clearChat, setCurrentSession, addDocumentMessage } = chatSlice.actions;
+export const { clearChatLocal, setCurrentSession, addDocumentMessage } = chatSlice.actions;
 export default chatSlice.reducer;

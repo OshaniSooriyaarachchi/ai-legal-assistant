@@ -51,7 +51,7 @@ This is an AI-powered legal assistant application that makes law books searchabl
 
 ## Implementation Steps
 
-### Phase 0: Database Schema Updates (Required First)
+### Phase 0: Database Schema Updates (done)
 
 #### 0.1 Extend Documents Table for Admin/Public Documents
 ```sql
@@ -127,8 +127,8 @@ DROP POLICY IF EXISTS "Users access chunks of own documents" ON document_chunks;
 CREATE POLICY "Users access chunks of accessible documents" ON document_chunks
     FOR SELECT USING (
         EXISTS (
-            SELECT 1 FROM documents d 
-            WHERE d.id = document_chunks.document_id 
+            SELECT 1 FROM documents d
+            WHERE d.id = document_chunks.document_id
             AND (d.user_id = auth.uid() OR (d.is_public = true AND d.is_active = true))
         )
     );
@@ -151,7 +151,7 @@ CREATE POLICY "Admins manage roles" ON user_roles
     );
 ```
 
-### Phase 1: Database Setup (Updated) 
+### Phase 1: Database Setup (Updated) (done)
 
 #### 1.1 Enable pgvector Extension (Done)
 ```sql

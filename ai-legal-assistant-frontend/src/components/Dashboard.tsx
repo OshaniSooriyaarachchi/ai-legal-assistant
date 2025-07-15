@@ -1,13 +1,20 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import { signOut } from '../features/auth/authSlice';
 import ChatInterface from './ChatInterface';
+import ChatSessionList from './ChatSessionList';
+import { loadChatSessions } from '../features/chat/chatSlice';
 
 const Dashboard: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Load chat sessions when dashboard mounts
+    dispatch(loadChatSessions());
+  }, [dispatch]);
 
   const handleSignOut = async () => {
     await dispatch(signOut());
@@ -15,7 +22,7 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       <nav className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
@@ -37,14 +44,16 @@ const Dashboard: React.FC = () => {
         </div>
       </nav>
 
-      <div className="py-10">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">AI Legal Assistant</h2>
-            <p className="text-gray-600">Upload documents and ask legal questions in one place</p>
+      {/* Main Content Area with Sidebar */}
+      <div className="flex-1 flex">
+        {/* Chat Sessions Sidebar */}
+        <ChatSessionList />
+        
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1">
+            <ChatInterface />
           </div>
-          
-          <ChatInterface />
         </div>
       </div>
     </div>

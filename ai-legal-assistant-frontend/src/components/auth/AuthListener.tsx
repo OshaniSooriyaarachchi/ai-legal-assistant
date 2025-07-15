@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppDispatch } from '../../app/hooks';
 import { supabase } from '../../lib/supabase';
 import { setUser } from '../../features/auth/authSlice';
+import { loadChatSessions, clearChatLocal } from '../../features/chat/chatSlice';
 
 const AuthListener: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const dispatch = useAppDispatch();
@@ -24,6 +25,13 @@ const AuthListener: React.FC<{ children: React.ReactNode }> = ({ children }) => 
                       session.user.user_metadata?.name // Facebook provides 'name'
           }
         }));
+        
+        // Load chat sessions for existing session
+        try {
+          dispatch(loadChatSessions());
+        } catch (error) {
+          console.error('Failed to load chat sessions on session check:', error);
+        }
       }
     };
 
@@ -45,11 +53,19 @@ const AuthListener: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           }
         }));
         
+        // Load chat sessions on sign in
+        try {
+          dispatch(loadChatSessions());
+        } catch (error) {
+          console.error('Failed to load chat sessions on login:', error);
+        }
+        
         if (!window.location.pathname.includes('/dashboard')) {
           navigate('/dashboard');
         }
       } else if (event === 'SIGNED_OUT') {
         dispatch({ type: 'auth/signOut' });
+        dispatch(clearChatLocal()); // Clear chat sessions and messages
         navigate('/login');
       }
     });

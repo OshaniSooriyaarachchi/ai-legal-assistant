@@ -16,7 +16,7 @@ const DocumentUploader: React.FC = () => {
     // Validate file type
     const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain'];
     if (!allowedTypes.includes(file.type)) {
-      alert('Only PDF, DOCX, and TXT files are supported');
+      window.alert('Only PDF, DOCX, and TXT files are supported');
       return;
     }
 

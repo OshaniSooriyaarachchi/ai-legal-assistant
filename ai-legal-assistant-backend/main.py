@@ -1,11 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
 import os
 import logging
 import time
+import jwt
+import requests
 
 from services.document_processor import DocumentProcessor
 from services.embedding_service import EmbeddingService
@@ -18,6 +21,10 @@ from config.settings import settings
 load_dotenv()
 
 # Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -74,16 +81,61 @@ embedding_service = EmbeddingService()
 vector_store = VectorStore()
 rag_service = RAGService()
 
-# Simple auth middleware (replace with proper JWT validation)
-async def get_current_user():
-    """Simple user auth - replace with proper JWT validation"""
-    # For now, return a dummy user - implement proper auth
-    class DummyUser:
-        def __init__(self):
-            self.id = "f74ef22f-c9d1-4881-a329-b35ed6ceead6"
-            self.email = "oshaninavodhya2001@gmail.com"
-    
-    return DummyUser()
+# Initialize security
+security = HTTPBearer()
+
+# Auth middleware
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Extract user from Supabase JWT token"""
+    try:
+        # Get the JWT token from the Authorization header
+        token = credentials.credentials
+        
+        # Verify the JWT token with Supabase
+        supabase = get_supabase_client()
+        
+        # Use Supabase to verify the token and get user info
+        try:
+            user_response = supabase.auth.get_user(token)
+            
+            if not user_response.user:
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+            
+            # Create user object with actual user data
+            class AuthenticatedUser:
+                def __init__(self, user_data):
+                    self.id = user_data.id
+                    self.email = user_data.email
+            
+            return AuthenticatedUser(user_response.user)
+            
+        except Exception as supabase_error:
+            logger.error(f"Supabase auth error: {str(supabase_error)}")
+            # Fallback: try to decode JWT manually for debugging
+            try:
+                # Decode without verification for debugging (not recommended for production)
+                decoded = jwt.decode(token, options={"verify_signature": False})
+                user_id = decoded.get('sub')
+                user_email = decoded.get('email', 'unknown@example.com')
+                
+                if user_id:
+                    class AuthenticatedUser:
+                        def __init__(self, user_id, email):
+                            self.id = user_id
+                            self.email = email
+                    
+                    return AuthenticatedUser(user_id, user_email)
+                else:
+                    raise HTTPException(status_code=401, detail="Invalid token payload")
+            except Exception as jwt_error:
+                logger.error(f"JWT decode error: {str(jwt_error)}")
+                raise HTTPException(status_code=401, detail="Invalid authentication token")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
 # Admin role check (simplified)
 async def verify_admin_role(user_id: str) -> bool:
@@ -263,7 +315,8 @@ async def create_chat_session(
         
         result = supabase.table('chat_sessions').insert({
             'user_id': current_user.id,
-            'title': title
+            'title': title,
+            'is_active': True  # Explicitly set as active
         }).execute()
         
         if not result.data:
@@ -291,14 +344,26 @@ async def get_user_chat_sessions(current_user = Depends(get_current_user)):
     try:
         supabase = get_supabase_client()
         
+        # Query for sessions that are either explicitly active (is_active = true) or NULL (default)
         result = supabase.table('chat_sessions').select(
-            'id, title, created_at, updated_at'
-        ).eq('user_id', current_user.id).eq('is_active', True).order('updated_at', desc=True).execute()
+            'id, title, created_at, updated_at, is_active'
+        ).eq('user_id', current_user.id).or_('is_active.eq.true,is_active.is.null').order('updated_at', desc=True).execute()
+        
+        # Filter out any explicitly inactive sessions
+        active_sessions = []
+        for session in (result.data or []):
+            if session.get('is_active') is not False:  # Include True and NULL
+                active_sessions.append({
+                    'id': session['id'],
+                    'title': session['title'],
+                    'created_at': session['created_at'],
+                    'updated_at': session['updated_at']
+                })
         
         return {
             "status": "success",
-            "sessions": result.data or [],
-            "total": len(result.data) if result.data else 0
+            "sessions": active_sessions,
+            "total": len(active_sessions)
         }
         
     except Exception as e:
@@ -329,6 +394,42 @@ async def get_chat_history(
         logger.error(f"Chat history retrieval failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get chat history: {str(e)}")
 
+@app.delete("/api/chat/sessions/{session_id}/history")
+async def clear_chat_history(
+    session_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Clear all chat history for a session (delete from query_history table)."""
+    try:
+        supabase = get_supabase_client()
+        logger.info(f"Attempting to clear chat history for session {session_id} for user {current_user.id}")
+        
+        # First, verify the session belongs to the user and exists
+        session_result = supabase.table('chat_sessions').select('id, user_id').eq('id', session_id).eq('user_id', current_user.id).execute()
+        
+        if not session_result.data:
+            logger.warning(f"Chat session {session_id} not found for user {current_user.id}")
+            raise HTTPException(status_code=404, detail="Chat session not found or access denied")
+        
+        # Delete all query history for this session
+        logger.info(f"Deleting query history for session {session_id}")
+        history_delete = supabase.table('query_history').delete().eq('session_id', session_id).eq('user_id', current_user.id).execute()
+        
+        deleted_count = len(history_delete.data) if history_delete.data else 0
+        logger.info(f"Query history deletion result: {deleted_count} records deleted")
+        
+        return {
+            "status": "success", 
+            "message": f"Chat history cleared for session {session_id}",
+            "deleted_count": deleted_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat history clearing failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear chat history: {str(e)}")
+
 # =============================================================================
 # CHAT/QUERY ENDPOINTS
 # =============================================================================
@@ -355,25 +456,15 @@ async def send_chat_message(
         processing_time = int((time.time() - start_time) * 1000)
         result['processing_time_ms'] = processing_time
         
-        # Store message in chat history
+        # Store complete conversation in single record
         supabase = get_supabase_client()
         
-        # Store user query
-        supabase.table('query_history').insert({
-            'user_id': current_user.id,
-            'session_id': session_id,
-            'query_text': request.query,
-            'message_type': 'user_query',
-            'processing_time_ms': processing_time
-        }).execute()
-        
-        # Store assistant response
         supabase.table('query_history').insert({
             'user_id': current_user.id,
             'session_id': session_id,
             'query_text': request.query,
             'response_text': result['response'],
-            'message_type': 'assistant_response',
+            'message_type': 'conversation',
             'processing_time_ms': processing_time
         }).execute()
         
@@ -474,6 +565,70 @@ async def chat_query(
     except Exception as e:
         logger.error(f"Chat query failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+    
+@app.delete("/api/chat/sessions/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a chat session and all its associated data."""
+    try:
+        supabase = get_supabase_client()
+        logger.info(f"Attempting to delete chat session {session_id} for user {current_user.id}")
+        
+        # First, verify the session belongs to the user and exists
+        session_result = supabase.table('chat_sessions').select('id, user_id, is_active').eq('id', session_id).eq('user_id', current_user.id).execute()
+        
+        if not session_result.data:
+            logger.warning(f"Chat session {session_id} not found for user {current_user.id}")
+            raise HTTPException(status_code=404, detail="Chat session not found or access denied")
+        
+        session_info = session_result.data[0]
+        logger.info(f"Found session: {session_info}")
+        
+        # Delete related query history first (due to foreign key constraints)
+        logger.info(f"Deleting query history for session {session_id}")
+        history_delete = supabase.table('query_history').delete().eq('session_id', session_id).eq('user_id', current_user.id).execute()
+        logger.info(f"Query history deletion result: {len(history_delete.data) if history_delete.data else 0} records deleted")
+        
+        # Delete the chat session (hard delete)
+        logger.info(f"Hard-deleting chat session {session_id}")
+        session_delete = supabase.table('chat_sessions').delete().eq('id', session_id).eq('user_id', current_user.id).execute()
+        
+        logger.info(f"Session deletion result: {session_delete.data}")
+        
+        if not session_delete.data:
+            logger.error(f"Failed to update session {session_id} - no data returned")
+            raise HTTPException(status_code=500, detail="Failed to delete chat session")
+        
+        logger.info(f"Successfully soft-deleted chat session {session_id} for user {current_user.id}")
+        
+        # Optional: Also delete session-specific documents if they exist
+        # Note: This assumes documents table has session_id column - skip if it doesn't exist
+        try:
+            # Check if documents table has session_id column by trying a test query
+            test_query = supabase.table('documents').select('id').limit(1).execute()
+            if test_query.data:
+                # Get column info to check if session_id exists
+                sample_doc = test_query.data[0]
+                # Only try to update documents if we can confirm the column exists
+                # For now, we'll skip this since the column doesn't exist in your schema
+                pass
+        except Exception as doc_error:
+            # Log but don't fail the entire operation
+            logger.warning(f"Could not delete session documents: {str(doc_error)}")
+        
+        return {
+            "status": "success",
+            "message": f"Chat session {session_id} deleted successfully",
+            "session_id": session_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Chat session deletion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete chat session: {str(e)}")
 
 @app.get("/api/documents", response_model=dict)
 async def list_documents(current_user = Depends(get_current_user)):
@@ -665,4 +820,4 @@ async def delete_document(
         raise
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")    
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")

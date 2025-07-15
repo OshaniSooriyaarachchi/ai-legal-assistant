@@ -49,7 +49,7 @@ const SignUp: React.FC = () => {
     const resultAction = await dispatch(signUp({ email, password }));
     if (signUp.fulfilled.match(resultAction)) {
       // Success - navigate to verification page or login
-      alert('Please check your email to confirm your account');
+      window.alert('Please check your email to confirm your account');
       navigate('/login');
     }
   };

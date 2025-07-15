@@ -1,15 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { sendMessage, clearChat, uploadDocument } from '../features/chat/chatSlice';
+import { sendMessage, clearChatLocal, clearChatHistory, uploadDocument } from '../features/chat/chatSlice';
 import MessageBubble from './MessageBubble';
 
 const ChatInterface: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { messages, loading, uploadedDocuments } = useAppSelector((state) => state.chat);
+  const { messages, loading, uploadedDocuments, currentSessionId, isClearingHistory } = useAppSelector((state) => state.chat);
   const [input, setInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const isSubmittingRef = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -19,35 +20,61 @@ const ChatInterface: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if ((!input.trim() && selectedFiles.length === 0) || loading) return;
-
-    // Handle file uploads first
-    if (selectedFiles.length > 0) {
-      for (const file of selectedFiles) {
+  const handleClearChat = async () => {
+    if (currentSessionId) {
+      // If there's a current session, clear history from database
+      if (window.confirm('Are you sure you want to clear this chat?')) {
         try {
-          await dispatch(uploadDocument(file)).unwrap();
+          await dispatch(clearChatHistory(currentSessionId)).unwrap();
         } catch (error) {
-          console.error('Failed to upload document:', error);
+          console.error('Failed to clear chat history:', error);
+          alert('Failed to clear chat history. Please try again.');
         }
       }
-      setSelectedFiles([]);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+    } else {
+      // If no session, just clear local messages
+      dispatch(clearChatLocal());
     }
+  };
 
-    // Then handle text message if any
-    if (input.trim()) {
-      const userMessage = input.trim();
-      setInput('');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Prevent double submission
+    if ((!input.trim() && selectedFiles.length === 0) || loading || isSubmittingRef.current) return;
+    
+    isSubmittingRef.current = true;
 
-      try {
-        await dispatch(sendMessage(userMessage)).unwrap();
-      } catch (error) {
-        console.error('Failed to send message:', error);
+    try {
+      // Handle file uploads first
+      if (selectedFiles.length > 0) {
+        for (const file of selectedFiles) {
+          try {
+            await dispatch(uploadDocument(file)).unwrap();
+          } catch (error) {
+            console.error('Failed to upload document:', error);
+          }
+        }
+        setSelectedFiles([]);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
       }
+
+      // Then handle text message if any
+      if (input.trim()) {
+        const userMessage = input.trim();
+        setInput(''); // Clear input immediately to prevent double submission
+
+        try {
+          await dispatch(sendMessage(userMessage)).unwrap();
+        } catch (error) {
+          console.error('Failed to send message:', error);
+        }
+      }
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
@@ -72,9 +99,9 @@ const ChatInterface: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-96 border border-gray-300 rounded-lg">
+    <div className="flex flex-col h-full border-l border-gray-300">
       {/* Chat Header */}
-      <div className="bg-blue-600 text-white p-4 rounded-t-lg flex justify-between items-center">
+      <div className="bg-blue-600 text-white p-4 flex justify-between items-center">
         <h3 className="font-semibold">AI Legal Assistant</h3>
         <div className="flex space-x-2">
           {uploadedDocuments.length > 0 && (
@@ -83,10 +110,20 @@ const ChatInterface: React.FC = () => {
             </span>
           )}
           <button
-            onClick={() => dispatch(clearChat())}
-            className="text-blue-200 hover:text-white text-sm"
+            onClick={handleClearChat}
+            disabled={isClearingHistory}
+            className="text-blue-200 hover:text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
           >
-            Clear Chat
+            {isClearingHistory ? (
+              <>
+                <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Clearing...
+              </>
+            ) : (
+              'Clear Chat'
+            )}
           </button>
         </div>
       </div>

@@ -51,7 +51,7 @@ export const signUpWithGoogle = createAsyncThunk(
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/login`,
+          redirectTo: `${window.location.origin}/auth/callback`,
           queryParams: {
             prompt: 'consent',
             access_type: 'offline'
@@ -74,7 +74,7 @@ export const signInWithGoogle = createAsyncThunk(
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard`,
+          redirectTo: `${window.location.origin}/auth/callback`,
           queryParams: {
             prompt: 'select_account'
           }
