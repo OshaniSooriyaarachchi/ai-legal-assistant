@@ -821,3 +821,130 @@ async def delete_document(
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+    
+
+
+@app.patch("/api/admin/documents/{document_id}/status")
+async def toggle_document_status(
+    document_id: str,
+    status_update: dict,  # {"is_active": true/false}
+    current_user = Depends(get_current_user)
+):
+    """Toggle document active/inactive status"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        from services.admin_service import AdminService
+        admin_service = AdminService()
+        
+        success = await admin_service.activate_deactivate_document(
+            current_user.id,
+            document_id,
+            status_update.get("is_active", True)
+        )
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "status": "success",
+            "message": f"Document status updated",
+            "document_id": document_id,
+            "is_active": status_update.get("is_active")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating document status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/admin/documents/{document_id}")
+async def delete_admin_document(
+    document_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete an admin document from knowledge base"""
+    print("Verifying admin role for user:", current_user.id)
+    try:
+        # Verify admin role
+        print("Verifying admin role for user:", current_user.id)
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        from services.admin_service import AdminService
+        admin_service = AdminService()
+        
+        success = await admin_service.delete_public_document(current_user.id, document_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "status": "success",
+            "message": "Document deleted successfully",
+            "document_id": document_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting admin document: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/statistics")
+async def get_admin_statistics(current_user = Depends(get_current_user)):
+    """Get admin dashboard statistics"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        from services.admin_service import AdminService
+        admin_service = AdminService()
+        
+        stats = await admin_service.get_admin_statistics(current_user.id)
+        
+        return {
+            "status": "success",
+            "statistics": stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting admin statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+#temporary login endpoint for testing
+
+@app.post("/api/auth/login")
+async def login_for_testing(credentials: dict):
+    """Temporary login endpoint for testing - REMOVE IN PRODUCTION"""
+    try:
+        supabase = get_supabase_client()
+        
+        email = credentials.get("email")
+        password = credentials.get("password")
+        
+        if not email or not password:
+            raise HTTPException(status_code=400, detail="Email and password required")
+        
+        # Login with Supabase
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": email,
+            "password": password
+        })
+        
+        if auth_response.user and auth_response.session:
+            return {
+                "access_token": auth_response.session.access_token,
+                "user_id": auth_response.user.id,
+                "email": auth_response.user.email
+            }
+        else:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Login failed: {str(e)}")

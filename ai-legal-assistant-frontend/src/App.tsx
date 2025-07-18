@@ -10,6 +10,7 @@ import Dashboard from './components/Dashboard';
 import ForgotPassword from './components/auth/ForgotPassword';
 import ResetPassword from './components/auth/ResetPassword';
 import AuthCallback from './components/auth/AuthCallback';
+import AdminDashboard from './components/admin/AdminDashboard';
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
             <Route path="/" element={<Navigate to="/login" />} />
             {/* Auth callback handler */}
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/admin" element={<AdminDashboard />} />
           </Routes>
         </AuthListener>
       </BrowserRouter>

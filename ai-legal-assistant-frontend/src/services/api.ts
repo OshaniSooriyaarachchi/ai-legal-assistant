@@ -1,4 +1,3 @@
-// Import supabase client for auth
 import { supabase } from '../lib/supabase';
 
 // Use environment variable for backend URL
@@ -6,6 +5,32 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:800
 
 export class ApiService {
   private static baseURL = API_BASE_URL;
+
+static async getAdminDocuments() {
+  const headers = await this.getAuthHeaders();
+  const response = await fetch(`${this.baseURL}/api/admin/documents`, {
+    headers,
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+static async getAdminStatistics() {
+  const headers = await this.getAuthHeaders();
+  const response = await fetch(`${this.baseURL}/api/admin/statistics`, {
+    headers,
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
 
   // Get authentication headers
   private static async getAuthHeaders(): Promise<Record<string, string>> {
@@ -210,3 +235,5 @@ export class ApiService {
     return response.json();
   }
 }
+
+

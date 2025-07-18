@@ -1,25 +1,40 @@
-import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import { signOut } from '../features/auth/authSlice';
 import ChatInterface from './ChatInterface';
 import ChatSessionList from './ChatSessionList';
 import { loadChatSessions } from '../features/chat/chatSlice';
+import { checkAdminRole } from '../utils/authUtils';
+import { supabase } from '../lib/supabase';
 
 const Dashboard: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const navigate = useNavigate();
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     // Load chat sessions when dashboard mounts
     dispatch(loadChatSessions());
   }, [dispatch]);
 
+  useEffect(() => {
+    checkAdminStatus();
+  }, []);
+
+  const checkAdminStatus = async () => {
+    const adminStatus = await checkAdminRole(supabase);
+    setIsAdmin(adminStatus);
+  };
+
   const handleSignOut = async () => {
     await dispatch(signOut());
     navigate('/login');
   };
+
+  // Also add this to see the current state
+  console.log('Current isAdmin state:', isAdmin);
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -33,6 +48,14 @@ const Dashboard: React.FC = () => {
             </div>
             <div className="flex items-center">
               <span className="text-gray-700 mr-4">Welcome, {user?.email}</span>
+              {isAdmin && (
+                <Link 
+                  to="/admin" 
+                  className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700 mr-4"
+                >
+                  Admin Panel
+                </Link>
+              )}
               <button
                 onClick={handleSignOut}
                 className="ml-4 px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"

@@ -18,3 +18,29 @@ export const checkEmailExists = async (email: string): Promise<boolean> => {
     return false;
   }
 };
+
+
+
+export const checkAdminRole = async (supabase: any): Promise<boolean> => {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+    
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', user.id)
+      .eq('role', 'admin')
+      .eq('is_active', true);
+
+      if (error) {
+        console.error('Error checking admin role:', error);
+        return false;
+      }
+    
+    return data && data.length > 0;
+  } catch (error) {
+    console.error('Error checking admin role:', error);
+    return false;
+  }
+};
