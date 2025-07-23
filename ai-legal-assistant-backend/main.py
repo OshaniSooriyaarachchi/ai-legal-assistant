@@ -444,13 +444,19 @@ async def send_chat_message(
     try:
         start_time = time.time()
         
+        # Check if this is the first message in the session
+        from services.chat_service import ChatService
+        chat_service = ChatService()
+        history = await chat_service.get_chat_history(session_id, limit=1)
+        is_first_message = len(history) == 0
+        
         # Generate response using hybrid RAG
         result = await rag_service.generate_hybrid_response(
             query=request.query,
             user_id=current_user.id,
             session_id=session_id,
             include_public=request.include_public,
-            include_user_docs=request.include_user_docs
+            include_user_docs=False
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -468,6 +474,12 @@ async def send_chat_message(
             'processing_time_ms': processing_time
         }).execute()
         
+        # Update title if this is the first message
+        if is_first_message:
+            await chat_service.update_session_title_from_message(
+                session_id, current_user.id, request.query
+            )
+        
         return {
             "status": "success",
             **result
@@ -476,6 +488,31 @@ async def send_chat_message(
     except Exception as e:
         logger.error(f"Chat message failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+@app.put("/api/chat/sessions/{session_id}/title")
+async def update_session_title(
+    session_id: str,
+    request: dict,
+    current_user = Depends(get_current_user)
+):
+    """Update chat session title"""
+    try:
+        title = request.get('title', '').strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        
+        from services.chat_service import ChatService
+        chat_service = ChatService()
+        success = await chat_service.update_session_title(session_id, current_user.id, title)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        return {"status": "success", "title": title}
+        
+    except Exception as e:
+        logger.error(f"Failed to update session title: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update title")
 
 @app.post("/api/chat/sessions/{session_id}/upload")
 async def upload_document_to_chat(
@@ -551,7 +588,7 @@ async def chat_query(
             query=request.query,
             user_id=current_user.id,
             include_public=request.include_public,
-            include_user_docs=request.include_user_docs
+            include_user_docs=False  # only search current session + public
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -914,6 +951,220 @@ async def get_admin_statistics(current_user = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"Error getting admin statistics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/users/chats")
+async def get_all_user_chats(current_user = Depends(get_current_user)):
+    """Get all user chats across all users for admin view"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Get all active chat sessions without profile joins
+        result = supabase.table('chat_sessions').select(
+            'id, title, created_at, updated_at, user_id'
+        ).or_('is_active.eq.true,is_active.is.null').order('updated_at', desc=True).execute()
+        
+        chats = []
+        for session in (result.data or []):
+            chats.append({
+                'session_id': session['id'],
+                'title': session['title'],
+                'user_id': session['user_id'],
+                'user_email': f"user-{session['user_id'][:8]}",  # Simple user identifier
+                'created_at': session['created_at'],
+                'updated_at': session['updated_at']
+            })
+        
+        return {
+            "status": "success",
+            "chats": chats,
+            "total": len(chats)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting all user chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user chats: {str(e)}")
+
+@app.get("/api/admin/users/{user_id}/chats")
+async def get_user_chats_by_admin(
+    user_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get all chats for a specific user (admin view)"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Get user's chat sessions
+        result = supabase.table('chat_sessions').select(
+            'id, title, created_at, updated_at'
+        ).eq('user_id', user_id).or_('is_active.eq.true,is_active.is.null').order('updated_at', desc=True).execute()
+        
+        # Get user email
+        user_result = supabase.table('profiles').select('email').eq('id', user_id).execute()
+        user_email = user_result.data[0]['email'] if user_result.data else "Unknown"
+        
+        chats = []
+        for session in (result.data or []):
+            chats.append({
+                'session_id': session['id'],
+                'title': session['title'],
+                'created_at': session['created_at'],
+                'updated_at': session['updated_at']
+            })
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_email": user_email,
+            "chats": chats,
+            "total": len(chats)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting user chats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user chats: {str(e)}")
+
+@app.get("/api/admin/sessions/{session_id}/history")
+async def get_chat_history_admin(
+    session_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get chat history for any session (admin view)"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Get session info WITHOUT profile joins
+        session_result = supabase.table('chat_sessions').select(
+            'id, title, user_id, created_at'
+        ).eq('id', session_id).execute()
+        
+        if not session_result.data:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        
+        session_info = session_result.data[0]
+        
+        # Get chat history
+        history_result = supabase.table('query_history').select(
+            'id, query_text, response_text, message_type, created_at, document_ids'
+        ).eq('session_id', session_id).order('created_at', desc=False).execute()
+        
+        return {
+            "status": "success",
+            "session_info": {
+                "session_id": session_info['id'],
+                "title": session_info['title'],
+                "user_id": session_info['user_id'],
+                "user_email": f"user-{session_info['user_id'][:8]}",  # Simple user identifier
+                "created_at": session_info['created_at']
+            },
+            "history": history_result.data or [],
+            "total": len(history_result.data) if history_result.data else 0
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting chat history for admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get chat history: {str(e)}")
+
+@app.get("/api/admin/users/documents")
+async def get_all_user_documents(current_user = Depends(get_current_user)):
+    """Get all user documents across all users for admin view"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Get all user documents (non-public) without profile joins
+        result = supabase.table('documents').select(
+            'id, title, file_name, file_size, file_type, upload_date, processing_status, user_id, is_active'
+        ).eq('is_public', False).order('upload_date', desc=True).execute()
+        
+        documents = []
+        for doc in (result.data or []):
+            documents.append({
+                'document_id': doc['id'],
+                'title': doc['title'],
+                'file_name': doc['file_name'],
+                'file_size': doc['file_size'],
+                'file_type': doc['file_type'],
+                'upload_date': doc['upload_date'],
+                'processing_status': doc['processing_status'],
+                'user_id': doc['user_id'],
+                'user_email': f"user-{doc['user_id'][:8]}",  # Simple user identifier
+                'is_active': doc.get('is_active', True)
+            })
+        
+        return {
+            "status": "success",
+            "documents": documents,
+            "total": len(documents)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting all user documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user documents: {str(e)}")
+
+@app.get("/api/admin/users/{user_id}/documents")
+async def get_user_documents_by_admin(
+    user_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get all documents for a specific user (admin view)"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Get user's documents
+        result = supabase.table('documents').select(
+            'id, title, file_name, file_size, file_type, upload_date, processing_status, is_active'
+        ).eq('user_id', user_id).eq('is_public', False).order('upload_date', desc=True).execute()
+        
+        documents = []
+        for doc in (result.data or []):
+            documents.append({
+                'document_id': doc['id'],
+                'title': doc['title'],
+                'file_name': doc['file_name'],
+                'file_size': doc['file_size'],
+                'file_type': doc['file_type'],
+                'upload_date': doc['upload_date'],
+                'processing_status': doc['processing_status'],
+                'is_active': doc.get('is_active', True)
+            })
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "user_email": f"user-{user_id[:8]}",  # Simple user identifier
+            "documents": documents,
+            "total": len(documents)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting user documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user documents: {str(e)}")
     
 
 

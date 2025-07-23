@@ -52,16 +52,27 @@ const initialState: ChatState = {
 
 export const sendMessage = createAsyncThunk(
   'chat/sendMessage',
-  async (query: string, { getState }) => {
+  async (query: string, { getState, dispatch }) => {
     const state = getState() as { chat: ChatState };
     const sessionId = state.chat.currentSessionId;
     
+    // Check if this is the first message in the session
+    const isFirstMessage = state.chat.messages.length === 0;
+    
     const response = await ApiService.sendChatMessage(query, sessionId || undefined);
+    
+    // If this was the first message, reload sessions to get the updated title
+    if (isFirstMessage && sessionId) {
+      // Dispatch loadChatSessions to refresh the session list with the new title
+      dispatch(loadChatSessions() as any);
+    }
+    
     return {
       query,
       response: response.response,
       sources: response.sources || [],
-      sessionId
+      sessionId,
+      isFirstMessage
     };
   }
 );
@@ -190,6 +201,14 @@ export const clearChatHistory = createAsyncThunk(
   async (sessionId: string) => {
     await ApiService.clearChatHistory(sessionId);
     return sessionId;
+  }
+);
+
+export const updateSessionTitle = createAsyncThunk(
+  'chat/updateSessionTitle',
+  async ({ sessionId, title }: { sessionId: string; title: string }) => {
+    const result = await ApiService.updateSessionTitle(sessionId, title);
+    return { sessionId, title: result.title };
   }
 );
 
@@ -332,6 +351,15 @@ const chatSlice = createSlice({
       .addCase(clearChatHistory.rejected, (state, action) => {
         state.error = action.error.message || 'Failed to clear chat history';
         state.isClearingHistory = false;
+      })
+      .addCase(updateSessionTitle.fulfilled, (state, action) => {
+        const session = state.sessions.find(s => s.id === action.payload.sessionId);
+        if (session) {
+          session.title = action.payload.title;
+        }
+      })
+      .addCase(updateSessionTitle.rejected, (state, action) => {
+        state.error = action.error.message || 'Failed to update title';
       });
   },
 });

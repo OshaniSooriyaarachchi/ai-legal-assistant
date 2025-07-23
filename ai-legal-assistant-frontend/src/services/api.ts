@@ -33,7 +33,7 @@ static async getAdminStatistics() {
 }
 
   // Get authentication headers
-  private static async getAuthHeaders(): Promise<Record<string, string>> {
+  public static async getAuthHeaders(): Promise<Record<string, string>> {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
@@ -80,7 +80,11 @@ static async getAdminStatistics() {
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ 
+        query,
+        include_public: true,
+        include_user_docs: false  // Enforce session isolation
+      }),
     });
 
     if (!response.ok) {
@@ -224,6 +228,87 @@ static async getAdminStatistics() {
     return response.json();
   }
 
+  static async updateSessionTitle(sessionId: string, title: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/title`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ title })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // Admin user chat endpoints
+  static async getAllUserChats() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/users/chats`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getUserChatsByAdmin(userId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/users/${userId}/chats`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getChatHistoryByAdmin(sessionId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/sessions/${sessionId}/history`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getAllUserDocuments() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/users/documents`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getUserDocumentsByAdmin(userId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/users/${userId}/documents`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
   // Health check endpoint
   static async checkHealth() {
     const response = await fetch(`${this.baseURL}/health`);
@@ -235,5 +320,69 @@ static async getAdminStatistics() {
     return response.json();
   }
 }
+
+// Export default instance for easier imports
+export const api = {
+  get: async (endpoint: string) => {
+    const headers = await ApiService.getAuthHeaders();
+    const response = await fetch(`${ApiService['baseURL']}/api${endpoint}`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw { response: { status: response.status, data: errorData } };
+    }
+
+    return { data: await response.json() };
+  },
+
+  post: async (endpoint: string, data?: any) => {
+    const headers = await ApiService.getAuthHeaders();
+    const response = await fetch(`${ApiService['baseURL']}/api${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw { response: { status: response.status, data: errorData } };
+    }
+
+    return { data: await response.json() };
+  },
+
+  put: async (endpoint: string, data?: any) => {
+    const headers = await ApiService.getAuthHeaders();
+    const response = await fetch(`${ApiService['baseURL']}/api${endpoint}`, {
+      method: 'PUT',
+      headers,
+      body: data ? JSON.stringify(data) : undefined,
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw { response: { status: response.status, data: errorData } };
+    }
+
+    return { data: await response.json() };
+  },
+
+  delete: async (endpoint: string) => {
+    const headers = await ApiService.getAuthHeaders();
+    const response = await fetch(`${ApiService['baseURL']}/api${endpoint}`, {
+      method: 'DELETE',
+      headers,
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      throw { response: { status: response.status, data: errorData } };
+    }
+
+    return { data: await response.json() };
+  }
+};
 
 

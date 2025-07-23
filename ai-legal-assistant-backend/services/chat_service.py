@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, List, Optional
 from datetime import datetime
 from config.supabase_client import get_supabase_client
@@ -148,6 +149,211 @@ class ChatService:
         except Exception as e:
             logger.error(f"Error updating session title: {str(e)}")
             raise Exception(f"Failed to update session title: {str(e)}")
+    
+    async def generate_chat_title(self, first_message: str, max_length: int = 50) -> str:
+        """Generate a meaningful title from the first message"""
+        try:
+            # Use enhanced method for better results
+            return await self.generate_enhanced_title(first_message)
+            
+        except Exception as e:
+            logger.error(f"Error generating title: {str(e)}")
+            return "New Chat"
+    
+    async def generate_smart_title(self, message: str) -> str:
+        """Generate title using AI"""
+        try:
+            import google.generativeai as genai
+            from config.settings import settings
+            
+            genai.configure(api_key=settings.gemini_api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            
+            prompt = f"""
+            Generate a meaningful, descriptive title for a legal chat conversation that starts with this message:
+            
+            "{message}"
+            
+            Requirements:
+            - Maximum 50 characters total
+            - Capture the main legal topic, not just the first few words
+            - Be specific and meaningful
+            - Use legal terminology when appropriate
+            - Return only the title, no quotes or explanation
+            
+            Examples of GOOD titles:
+            - "Employment Contract Review"
+            - "Property Dispute Resolution" 
+            - "Intellectual Property Rights"
+            - "Corporate Compliance Issue"
+            - "Tenant Rights Question"
+            - "Business Formation Help"
+            - "Privacy Law Compliance"
+            - "Tax Law Consultation"
+            
+            Examples of BAD titles (avoid these):
+            - "I need help with my..."
+            - "Can you help me..."
+            - "What should I do about..."
+            """
+            
+            response = model.generate_content(prompt)
+            title = response.text.strip().replace('"', '').replace("'", "")
+            
+            # Validate the title quality
+            if self._is_meaningful_title(title, message):
+                return title[:50]  # Ensure character limit
+            else:
+                # Try enhanced extraction method
+                return await self.generate_enhanced_title(message)
+            
+        except Exception as e:
+            logger.error(f"AI title generation failed: {str(e)}")
+            return await self.generate_enhanced_title(message)
+    
+    def _is_meaningful_title(self, title: str, original_message: str) -> bool:
+        """Check if the generated title is meaningful"""
+        if not title or len(title) < 5:
+            return False
+            
+        # Check for bad patterns
+        bad_patterns = [
+            "i need help", "can you help", "what should i", 
+            "how do i", "please help", "i have a question",
+            "i want to", "i'm looking for"
+        ]
+        
+        title_lower = title.lower()
+        for pattern in bad_patterns:
+            if pattern in title_lower:
+                return False
+        
+        # Check if title is just truncated first words
+        first_words = " ".join(original_message.split()[:4]).lower()
+        if title_lower.startswith(first_words.lower()[:20]):
+            return False
+            
+        return True
+    
+    async def generate_enhanced_title(self, message: str) -> str:
+        """Enhanced title generation with legal keyword extraction"""
+        try:
+            # Legal keywords to prioritize
+            legal_keywords = {
+                'contract': 'Contract',
+                'employment': 'Employment',
+                'property': 'Property', 
+                'intellectual property': 'IP',
+                'copyright': 'Copyright',
+                'trademark': 'Trademark',
+                'patent': 'Patent',
+                'corporate': 'Corporate',
+                'business': 'Business',
+                'compliance': 'Compliance',
+                'privacy': 'Privacy',
+                'tenant': 'Tenant Rights',
+                'landlord': 'Landlord Issue',
+                'divorce': 'Divorce',
+                'custody': 'Child Custody',
+                'immigration': 'Immigration',
+                'criminal': 'Criminal Law',
+                'personal injury': 'Personal Injury',
+                'medical malpractice': 'Medical Malpractice',
+                'tax': 'Tax Law',
+                'estate': 'Estate Planning',
+                'will': 'Will/Testament',
+                'lawsuit': 'Litigation',
+                'settlement': 'Settlement',
+                'liability': 'Liability',
+                'insurance': 'Insurance',
+                'bankruptcy': 'Bankruptcy',
+                'discrimination': 'Discrimination',
+                'harassment': 'Harassment',
+                'wrongful termination': 'Wrongful Termination',
+                'non-disclosure': 'NDA',
+                'non-compete': 'Non-Compete'
+            }
+            
+            message_lower = message.lower()
+            
+            # Find relevant legal topics
+            found_topics = []
+            for keyword, topic in legal_keywords.items():
+                if keyword in message_lower:
+                    found_topics.append(topic)
+            
+            # Action keywords
+            action_keywords = {
+                'review': 'Review',
+                'help': 'Help',
+                'advice': 'Advice', 
+                'question': 'Question',
+                'issue': 'Issue',
+                'problem': 'Problem',
+                'dispute': 'Dispute',
+                'concern': 'Concern',
+                'consultation': 'Consultation',
+                'guidance': 'Guidance'
+            }
+            
+            found_actions = []
+            for keyword, action in action_keywords.items():
+                if keyword in message_lower:
+                    found_actions.append(action)
+            
+            # Generate meaningful title
+            if found_topics:
+                main_topic = found_topics[0]
+                if found_actions:
+                    title = f"{main_topic} {found_actions[0]}"
+                else:
+                    title = f"{main_topic} Matter"
+            else:
+                # Extract key nouns and create a title
+                import re
+                words = re.findall(r'\b[A-Za-z]{3,}\b', message)
+                important_words = [w for w in words[:8] if w.lower() not in 
+                                 ['the', 'and', 'for', 'with', 'need', 'help', 'can', 'you', 'please', 'want', 'have']]
+                
+                if important_words:
+                    if len(important_words) >= 2:
+                        title = f"{important_words[0]} {important_words[1]} Matter"
+                    else:
+                        title = f"{important_words[0]} Question"
+                else:
+                    title = "Legal Consultation"
+            
+            # Ensure proper capitalization and length
+            title = ' '.join(word.capitalize() for word in title.split())
+            return title[:50]
+            
+        except Exception as e:
+            logger.error(f"Enhanced title generation failed: {str(e)}")
+            return "Legal Question"
+    
+    async def update_session_title_from_message(self, session_id: str, user_id: str, 
+                                              first_message: str) -> bool:
+        """Update session title based on first message"""
+        try:
+            # Check if session already has a custom title
+            result = self.supabase.table('chat_sessions').select('title').eq('id', session_id).execute()
+            
+            if not result.data:
+                return False
+            
+            current_title = result.data[0]['title']
+            
+            # Only update if title is generic (contains "Chat" and timestamp pattern)
+            if "Chat" in current_title and any(c.isdigit() for c in current_title):
+                # Use AI-powered title generation
+                new_title = await self.generate_smart_title(first_message)
+                return await self.update_session_title(session_id, user_id, new_title)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating session title from message: {str(e)}")
+            return False
     
     async def delete_chat_session(self, session_id: str, user_id: str) -> bool:
         """Delete chat session and all its messages"""
