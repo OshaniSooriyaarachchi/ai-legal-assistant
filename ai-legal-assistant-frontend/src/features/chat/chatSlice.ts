@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { ApiService } from '../../services/api';
+import { ApiService, RateLimitError } from '../../services/api';
 
 interface Message {
   id: string;
@@ -35,6 +35,7 @@ interface ChatState {
   isDeletingSession: boolean;
   isClearingHistory: boolean;
   error: string | null;
+  rateLimitError: boolean;
 }
 
 const initialState: ChatState = {
@@ -48,32 +49,40 @@ const initialState: ChatState = {
   isDeletingSession: false,
   isClearingHistory: false,
   error: null,
+  rateLimitError: false,
 };
 
 export const sendMessage = createAsyncThunk(
   'chat/sendMessage',
-  async (query: string, { getState, dispatch }) => {
-    const state = getState() as { chat: ChatState };
-    const sessionId = state.chat.currentSessionId;
-    
-    // Check if this is the first message in the session
-    const isFirstMessage = state.chat.messages.length === 0;
-    
-    const response = await ApiService.sendChatMessage(query, sessionId || undefined);
-    
-    // If this was the first message, reload sessions to get the updated title
-    if (isFirstMessage && sessionId) {
-      // Dispatch loadChatSessions to refresh the session list with the new title
-      dispatch(loadChatSessions() as any);
+  async (query: string, { getState, dispatch, rejectWithValue }) => {
+    try {
+      const state = getState() as { chat: ChatState };
+      const sessionId = state.chat.currentSessionId;
+      
+      // Check if this is the first message in the session
+      const isFirstMessage = state.chat.messages.length === 0;
+      
+      const response = await ApiService.sendChatMessage(query, sessionId || undefined);
+      
+      // If this was the first message, reload sessions to get the updated title
+      if (isFirstMessage && sessionId) {
+        // Dispatch loadChatSessions to refresh the session list with the new title
+        dispatch(loadChatSessions() as any);
+      }
+      
+      return {
+        query,
+        response: response.response,
+        sources: response.sources || [],
+        sessionId,
+        isFirstMessage
+      };
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        return rejectWithValue({ type: 'RATE_LIMIT', error });
+      }
+      throw error;
     }
-    
-    return {
-      query,
-      response: response.response,
-      sources: response.sources || [],
-      sessionId,
-      isFirstMessage
-    };
   }
 );
 
@@ -235,6 +244,10 @@ const chatSlice = createSlice({
       };
       state.messages.push(documentMessage);
     },
+    clearRateLimitError: (state) => {
+      state.rateLimitError = false;
+      state.error = null;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -275,7 +288,14 @@ const chatSlice = createSlice({
       })
       .addCase(sendMessage.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.error.message || 'Failed to send message';
+        
+        // Check if this is a rate limit error
+        if (action.payload && (action.payload as any).type === 'RATE_LIMIT') {
+          state.rateLimitError = true;
+          state.error = 'Daily query limit reached. Please upgrade your plan for unlimited queries.';
+        } else {
+          state.error = action.error.message || 'Failed to send message';
+        }
       })
       
       // Upload document cases
@@ -364,5 +384,5 @@ const chatSlice = createSlice({
   },
 });
 
-export const { clearChatLocal, setCurrentSession, addDocumentMessage } = chatSlice.actions;
+export const { clearChatLocal, setCurrentSession, addDocumentMessage, clearRateLimitError } = chatSlice.actions;
 export default chatSlice.reducer;

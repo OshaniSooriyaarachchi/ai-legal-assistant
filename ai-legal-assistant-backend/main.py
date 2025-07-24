@@ -17,6 +17,9 @@ from services.rag_service import RAGService
 from config.supabase_client import get_supabase_client
 from config.settings import settings
 
+from services.rate_limiting_service import RateLimitingService
+from api.rate_limit_middleware import check_query_rate_limit, increment_query_count
+
 # Load environment variables
 load_dotenv()
 
@@ -80,6 +83,7 @@ document_processor = DocumentProcessor()
 embedding_service = EmbeddingService()
 vector_store = VectorStore()
 rag_service = RAGService()
+rate_limiting_service = RateLimitingService()
 
 # Initialize security
 security = HTTPBearer()
@@ -1047,15 +1051,21 @@ async def get_chat_history_admin(
         
         supabase = get_supabase_client()
         
-        # Get session info WITHOUT profile joins
+        # Get session info with user details
         session_result = supabase.table('chat_sessions').select(
-            'id, title, user_id, created_at'
+            '''
+            id, title, user_id, created_at,
+            profiles!chat_sessions_user_id_fkey(email)
+            '''
         ).eq('id', session_id).execute()
         
         if not session_result.data:
             raise HTTPException(status_code=404, detail="Chat session not found")
         
         session_info = session_result.data[0]
+        user_email = "Unknown"
+        if session_info.get('profiles'):
+            user_email = session_info['profiles'].get('email', 'Unknown')
         
         # Get chat history
         history_result = supabase.table('query_history').select(
@@ -1068,7 +1078,7 @@ async def get_chat_history_admin(
                 "session_id": session_info['id'],
                 "title": session_info['title'],
                 "user_id": session_info['user_id'],
-                "user_email": f"user-{session_info['user_id'][:8]}",  # Simple user identifier
+                "user_email": user_email,
                 "created_at": session_info['created_at']
             },
             "history": history_result.data or [],
@@ -1199,3 +1209,107 @@ async def login_for_testing(credentials: dict):
             
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Login failed: {str(e)}")
+    
+
+
+# =============================================================================
+# SUBSCRIPTION ENDPOINTS
+# =============================================================================
+
+@app.get("/api/subscription/plans")
+async def get_subscription_plans():
+    """Get all available subscription plans"""
+    try:
+        plans = await rate_limiting_service.get_subscription_plans()
+        return {
+            "status": "success",
+            "plans": plans
+        }
+    except Exception as e:
+        logger.error(f"Error getting subscription plans: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get subscription plans")
+
+@app.get("/api/subscription/current")
+async def get_current_subscription(current_user = Depends(get_current_user)):
+    """Get user's current subscription and usage"""
+    try:
+        subscription = await rate_limiting_service.get_user_subscription(current_user.id)
+        daily_usage = await rate_limiting_service.get_daily_usage(current_user.id)
+        
+        return {
+            "status": "success",
+            "subscription": subscription,
+            "daily_usage": daily_usage,
+            "remaining_queries": subscription['daily_limit'] - daily_usage if subscription['daily_limit'] != -1 else -1
+        }
+    except Exception as e:
+        logger.error(f"Error getting current subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get subscription info")
+
+@app.post("/api/subscription/upgrade")
+async def upgrade_subscription(
+    request: dict,  # {"plan_name": "premium"}
+    current_user = Depends(get_current_user)
+):
+    """Upgrade user subscription (simplified - integrate with payment processor)"""
+    try:
+        plan_name = request.get("plan_name")
+        if not plan_name:
+            raise HTTPException(status_code=400, detail="Plan name is required")
+        
+        # In production, you would:
+        # 1. Process payment with Stripe/PayPal
+        # 2. Verify payment success
+        # 3. Then upgrade the subscription
+        
+        success = await rate_limiting_service.upgrade_user_subscription(
+            current_user.id, plan_name
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Successfully upgraded to {plan_name} plan"
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Failed to upgrade subscription")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error upgrading subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upgrade subscription")
+
+@app.get("/api/usage/history")
+async def get_usage_history(
+    days: int = 30,
+    current_user = Depends(get_current_user)
+):
+    """Get user's query usage history"""
+    try:
+        # Calculate date range
+        from datetime import date, timedelta
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        
+        supabase = get_supabase_client()
+        result = supabase.table('daily_query_usage').select(
+            'usage_date, query_count'
+        ).eq('user_id', current_user.id).gte(
+            'usage_date', start_date.isoformat()
+        ).lte(
+            'usage_date', end_date.isoformat()
+        ).order('usage_date', desc=True).execute()
+        
+        return {
+            "status": "success",
+            "usage_history": result.data or [],
+            "period": {
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "days": days
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting usage history: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get usage history")    

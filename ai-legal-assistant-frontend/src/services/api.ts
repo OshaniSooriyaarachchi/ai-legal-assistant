@@ -3,34 +3,71 @@ import { supabase } from '../lib/supabase';
 // Use environment variable for backend URL
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 
+// Subscription-related interfaces
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  display_name: string;
+  daily_query_limit: number;
+  price_monthly: number;
+  features: string[];
+}
+
+export interface UserSubscription {
+  subscription_id: string;
+  plan_name: string;
+  plan_display_name: string;
+  daily_limit: number;
+  price_monthly?: number;
+  features?: string[];
+  status: string;
+  expires_at?: string;
+}
+
+export interface UsageInfo {
+  daily_usage: number;
+  current_usage: number;
+  daily_limit: number;
+  remaining_queries: number;
+  subscription: UserSubscription;
+}
+
+// Custom error class for rate limiting
+export class RateLimitError extends Error {
+  constructor(public detail: any) {
+    super(detail.message);
+    this.name = 'RateLimitError';
+  }
+}
+
 export class ApiService {
   private static baseURL = API_BASE_URL;
 
-static async getAdminDocuments() {
-  const headers = await this.getAuthHeaders();
-  const response = await fetch(`${this.baseURL}/api/admin/documents`, {
-    headers,
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  static async getAdminDocuments() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/documents`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
   }
 
-  return response.json();
-}
+  static async getAdminStatistics() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/statistics`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
 
-static async getAdminStatistics() {
-  const headers = await this.getAuthHeaders();
-  const response = await fetch(`${this.baseURL}/api/admin/statistics`, {
-    headers,
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    return response.json();
   }
-
-  return response.json();
-}
 
   // Get authentication headers
   public static async getAuthHeaders(): Promise<Record<string, string>> {
@@ -87,10 +124,42 @@ static async getAdminStatistics() {
       }),
     });
 
+    if (response.status === 429) {
+      // Rate limit exceeded
+      const errorData = await response.json();
+      throw new RateLimitError(errorData.detail);
+    }
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
+    return response.json();
+  }
+
+  // Updated sendMessage method with rate limiting
+  static async sendMessage(sessionId: string, message: string): Promise<any> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/message`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        query: message,
+        include_public: true,
+        include_user_docs: true,
+      }),
+    });
+    
+    if (response.status === 429) {
+      // Rate limit exceeded
+      const errorData = await response.json();
+      throw new RateLimitError(errorData.detail);
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     return response.json();
   }
 
@@ -317,6 +386,57 @@ static async getAdminStatistics() {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
+    return response.json();
+  }
+
+  // Subscription management endpoints
+  static async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
+    const response = await fetch(`${this.baseURL}/api/subscription/plans`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.plans;
+  }
+
+  static async getCurrentSubscription(): Promise<UsageInfo> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/subscription/current`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return response.json();
+  }
+
+  static async upgradeSubscription(planName: string): Promise<void> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/subscription/upgrade`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ plan_name: planName }),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+  }
+
+  static async getUsageHistory(days: number = 30) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/usage/history?days=${days}`, {
+      headers,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     return response.json();
   }
 }
