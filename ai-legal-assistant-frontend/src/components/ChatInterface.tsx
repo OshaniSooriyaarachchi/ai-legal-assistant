@@ -1,103 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
-import { sendMessage, clearChatLocal, clearChatHistory, uploadDocument } from '../features/chat/chatSlice';
+import { sendMessage, clearChatLocal, clearChatHistory, uploadDocument, clearRateLimitError } from '../features/chat/chatSlice';
 import { RateLimitError } from '../services/api';
 import MessageBubble from './MessageBubble';
-
-interface RateLimitModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  errorDetail: any;
-}
-
-const RateLimitModal: React.FC<RateLimitModalProps> = ({ isOpen, onClose, errorDetail }) => {
-  if (!isOpen) return null;
-
-  const isExpired = errorDetail?.error === 'SUBSCRIPTION_EXPIRED';
-  const isInactive = errorDetail?.error === 'SUBSCRIPTION_INACTIVE';
-  const isLimitExceeded = errorDetail?.error === 'DAILY_LIMIT_EXCEEDED';
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg max-w-md w-full mx-4 p-6">
-        <div className="flex items-center mb-4">
-          <div className="rounded-full bg-red-100 p-2 mr-3">
-            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-semibold text-gray-900">
-            {isLimitExceeded ? 'Daily Limit Reached' : 
-             isExpired ? 'Subscription Expired' : 
-             isInactive ? 'Subscription Inactive' : 'Query Limit Reached'}
-          </h3>
-        </div>
-        
-        <div className="mb-6">
-          <p className="text-gray-600 mb-4">
-            {errorDetail?.message || 'You have reached your query limit.'}
-          </p>
-          
-          {isLimitExceeded && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-yellow-800">Today's usage:</span>
-                <span className="font-semibold text-yellow-900">
-                  {errorDetail?.current_usage} / {errorDetail?.daily_limit}
-                </span>
-              </div>
-              <div className="w-full bg-yellow-200 rounded-full h-2 mt-2">
-                <div 
-                  className="bg-yellow-600 h-2 rounded-full" 
-                  style={{ 
-                    width: `${Math.min((errorDetail?.current_usage / errorDetail?.daily_limit) * 100, 100)}%` 
-                  } as React.CSSProperties}
-                ></div>
-              </div>
-            </div>
-          )}
-          
-          <div className="text-sm text-gray-500">
-            <p className="font-medium mb-2">Upgrade to continue:</p>
-            <ul className="space-y-1">
-              <li>• Unlimited daily queries</li>
-              <li>• Priority support</li>
-              <li>• Advanced features</li>
-              <li>• No interruptions</li>
-            </ul>
-          </div>
-        </div>
-        
-        <div className="flex space-x-3">
-          <button
-            onClick={() => {
-              onClose();
-              // Navigate to subscription page
-              window.location.href = '/subscription';
-            }}
-            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 font-medium"
-          >
-            Upgrade Now
-          </button>
-          <button
-            onClick={onClose}
-            className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 font-medium"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+import { useSelector, useDispatch } from 'react-redux';
+import RateLimitModal from './RateLimitModal';
 
 const ChatInterface: React.FC = () => {
-  const dispatch = useAppDispatch();
+  const dispatch = useDispatch();
+  const { rateLimitError, rateLimitErrorData } = useSelector((state: any) => state.chat);
+  const appDispatch = useAppDispatch();
   const { messages, loading, uploadedDocuments, currentSessionId, isClearingHistory, error } = useAppSelector((state) => state.chat);
   const [input, setInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [showRateLimitModal, setShowRateLimitModal] = useState(false);
-  const [rateLimitError, setRateLimitError] = useState<any>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
@@ -115,7 +31,7 @@ const ChatInterface: React.FC = () => {
       // If there's a current session, clear history from database
       if (window.confirm('Are you sure you want to clear this chat?')) {
         try {
-          await dispatch(clearChatHistory(currentSessionId)).unwrap();
+          await appDispatch(clearChatHistory(currentSessionId)).unwrap();
         } catch (error) {
           console.error('Failed to clear chat history:', error);
           alert('Failed to clear chat history. Please try again.');
@@ -141,7 +57,7 @@ const ChatInterface: React.FC = () => {
       if (selectedFiles.length > 0) {
         for (const file of selectedFiles) {
           try {
-            await dispatch(uploadDocument(file)).unwrap();
+            await appDispatch(uploadDocument(file)).unwrap();
           } catch (error) {
             console.error('Failed to upload document:', error);
           }
@@ -158,7 +74,7 @@ const ChatInterface: React.FC = () => {
         setInput(''); // Clear input immediately to prevent double submission
 
         try {
-          await dispatch(sendMessage(userMessage)).unwrap();
+          await appDispatch(sendMessage(userMessage)).unwrap();
         } catch (error: any) {
           console.error('Failed to send message:', error);
           
@@ -168,8 +84,8 @@ const ChatInterface: React.FC = () => {
               (error.message && error.message.includes('rate limit')) ||
               (error.detail && ['DAILY_LIMIT_EXCEEDED', 'SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_INACTIVE'].includes(error.detail.error))) {
             
-            setRateLimitError(error.detail || error);
-            setShowRateLimitModal(true);
+            // Rate limit error will be handled by Redux state
+            console.log('Rate limit error detected:', error);
           } else {
             // Handle other errors
             console.error('Chat error:', error);
@@ -204,12 +120,13 @@ const ChatInterface: React.FC = () => {
   return (
     <>
       <RateLimitModal
-        isOpen={showRateLimitModal}
-        onClose={() => {
-          setShowRateLimitModal(false);
-          setRateLimitError(null);
+        isOpen={rateLimitError}
+        onClose={() => dispatch(clearRateLimitError())}
+        usageInfo={rateLimitErrorData}
+        onUpgrade={(planName: string) => {
+          // Handle upgrade logic here
+          console.log('Upgrade to:', planName);
         }}
-        errorDetail={rateLimitError}
       />
       
       <div className="flex flex-col h-full border-l border-gray-300">

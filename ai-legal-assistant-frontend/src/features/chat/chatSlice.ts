@@ -24,6 +24,21 @@ interface ChatSession {
   updated_at: string;
 }
 
+interface RateLimitErrorData {
+  type: 'RATE_LIMIT';
+  message: string;
+  detail: {
+    error: string;
+    message: string;
+    current_usage: number;
+    daily_limit: number;
+    subscription: {
+      plan_display_name: string;
+      plan_name: string;
+    };
+  };
+}
+
 interface ChatState {
   messages: Message[];
   uploadedDocuments: UploadedDocument[];
@@ -36,6 +51,7 @@ interface ChatState {
   isClearingHistory: boolean;
   error: string | null;
   rateLimitError: boolean;
+  rateLimitErrorData: RateLimitErrorData | null;
 }
 
 const initialState: ChatState = {
@@ -50,6 +66,7 @@ const initialState: ChatState = {
   isClearingHistory: false,
   error: null,
   rateLimitError: false,
+  rateLimitErrorData: null,
 };
 
 export const sendMessage = createAsyncThunk(
@@ -62,7 +79,7 @@ export const sendMessage = createAsyncThunk(
       // Check if this is the first message in the session
       const isFirstMessage = state.chat.messages.length === 0;
       
-      const response = await ApiService.sendChatMessage(query, sessionId || undefined);
+      const response = await ApiService.sendMessage(sessionId || '', query);
       
       // If this was the first message, reload sessions to get the updated title
       if (isFirstMessage && sessionId) {
@@ -79,9 +96,18 @@ export const sendMessage = createAsyncThunk(
       };
     } catch (error) {
       if (error instanceof RateLimitError) {
-        return rejectWithValue({ type: 'RATE_LIMIT', error });
+        // Serialize the rate limit error data
+        return rejectWithValue({
+          type: 'RATE_LIMIT',
+          message: error.message,
+          detail: error.detail // This contains the serializable error details
+        });
       }
-      throw error;
+      // For other errors, return a serializable error
+      return rejectWithValue({
+        type: 'API_ERROR',
+        message: error instanceof Error ? error.message : 'Unknown error occurred'
+      });
     }
   }
 );
@@ -246,6 +272,7 @@ const chatSlice = createSlice({
     },
     clearRateLimitError: (state) => {
       state.rateLimitError = false;
+      state.rateLimitErrorData = null;
       state.error = null;
     },
   },
@@ -274,6 +301,8 @@ const chatSlice = createSlice({
         
         state.loading = true;
         state.error = null;
+        state.rateLimitError = false;
+        state.rateLimitErrorData = null;
       })
       .addCase(sendMessage.fulfilled, (state, action) => {
         const assistantMessage: Message = {
@@ -292,7 +321,14 @@ const chatSlice = createSlice({
         // Check if this is a rate limit error
         if (action.payload && (action.payload as any).type === 'RATE_LIMIT') {
           state.rateLimitError = true;
+          state.rateLimitErrorData = action.payload as RateLimitErrorData;
           state.error = 'Daily query limit reached. Please upgrade your plan for unlimited queries.';
+          
+          // Remove the user message that failed due to rate limiting
+          const lastMessage = state.messages[state.messages.length - 1];
+          if (lastMessage && lastMessage.sender === 'user') {
+            state.messages.pop();
+          }
         } else {
           state.error = action.error.message || 'Failed to send message';
         }

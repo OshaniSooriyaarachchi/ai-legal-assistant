@@ -34,9 +34,13 @@ export interface UsageInfo {
 
 // Custom error class for rate limiting
 export class RateLimitError extends Error {
-  constructor(public detail: any) {
-    super(detail.message);
+  public readonly type = 'RATE_LIMIT';
+  public readonly detail: any;
+
+  constructor(detail: any) {
+    super(detail.message || 'Rate limit exceeded');
     this.name = 'RateLimitError';
+    this.detail = detail;
   }
 }
 
@@ -106,47 +110,16 @@ export class ApiService {
     return {};
   }
 
-  // Chat endpoints
-  static async sendChatMessage(query: string, sessionId?: string) {
-    const url = sessionId
-      ? `${this.baseURL}/api/chat/sessions/${sessionId}/message`
-      : `${this.baseURL}/api/chat`;
-    
-    const headers = await this.getAuthHeaders();
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ 
-        query,
-        include_public: true,
-        include_user_docs: false  // Enforce session isolation
-      }),
-    });
-
-    if (response.status === 429) {
-      // Rate limit exceeded
-      const errorData = await response.json();
-      throw new RateLimitError(errorData.detail);
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    return response.json();
-  }
-
   // Updated sendMessage method with rate limiting
-  static async sendMessage(sessionId: string, message: string): Promise<any> {
+  static async sendMessage(sessionId: string, message: string, includePublic = true): Promise<any> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/message`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         query: message,
-        include_public: true,
-        include_user_docs: true,
+        include_public: includePublic,
+        include_user_docs: false,
       }),
     });
     
@@ -504,5 +477,3 @@ export const api = {
     return { data: await response.json() };
   }
 };
-
-
