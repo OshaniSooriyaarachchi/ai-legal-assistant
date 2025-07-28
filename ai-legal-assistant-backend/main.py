@@ -141,6 +141,12 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         logger.error(f"Authentication error: {str(e)}")
         raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
 
+
+async def check_rate_limit_with_user(current_user = Depends(get_current_user)):
+    """Rate limit check that properly gets current user"""
+    return await check_query_rate_limit(current_user)
+
+
 # Admin role check (simplified)
 async def verify_admin_role(user_id: str) -> bool:
     """Check if user has admin privileges"""
@@ -442,7 +448,8 @@ async def clear_chat_history(
 async def send_chat_message(
     session_id: str,
     request: ChatRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),  # Get user FIRST
+    rate_limit_info = Depends(check_rate_limit_with_user)  # Use the wrapper function
 ):
     """Send message in chat session with hybrid search."""
     try:
@@ -484,6 +491,9 @@ async def send_chat_message(
                 session_id, current_user.id, request.query
             )
         
+        # INCREMENT USAGE AFTER SUCCESSFUL QUERY
+        await increment_query_count(current_user)
+        
         return {
             "status": "success",
             **result
@@ -492,6 +502,8 @@ async def send_chat_message(
     except Exception as e:
         logger.error(f"Chat message failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
 
 @app.put("/api/chat/sessions/{session_id}/title")
 async def update_session_title(
@@ -581,6 +593,7 @@ async def upload_document_to_chat(
 @app.post("/api/chat", response_model=dict)
 async def chat_query(
     request: ChatRequest,
+    rate_limit_info = Depends(check_query_rate_limit),  # ADD RATE LIMITING CHECK
     current_user = Depends(get_current_user)
 ):
     """General chat endpoint (legacy support)."""
@@ -597,6 +610,9 @@ async def chat_query(
         
         processing_time = int((time.time() - start_time) * 1000)
         result['processing_time_ms'] = processing_time
+        
+        # INCREMENT USAGE AFTER SUCCESSFUL QUERY
+        await increment_query_count(current_user)
         
         return {
             "status": "success",

@@ -45,17 +45,22 @@ async def check_query_rate_limit(current_user):
                     }
                 )
         
-        # If we reach here, user can proceed
+        # IMPORTANT: Return the rate limit info for successful checks
         return info
         
     except HTTPException:
+        # Re-raise HTTP exceptions (rate limit errors)
         raise
     except Exception as e:
         logger.error(f"Rate limiting check failed: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Rate limiting check failed"
-        )
+        # For any other errors, log but allow the request to proceed
+        # This prevents the entire API from breaking if rate limiting fails
+        logger.warning("Rate limiting failed - allowing request to proceed")
+        return {
+            "bypass": True,
+            "error": "rate_limiting_unavailable",
+            "message": "Rate limiting temporarily unavailable"
+        }
 
 async def increment_query_count(current_user):
     """Increment user's daily query count after successful query"""

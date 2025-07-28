@@ -162,21 +162,31 @@ class RateLimitingService:
                     'plan_id': plan_result.data['id'],
                     'status': 'active'
                 }).execute()
+                logger.info(f"Assigned free plan to user {user_id}")
+            else:
+                logger.error("No free plan found in subscription_plans table")
+                # Create a default free plan if it doesn't exist
+                free_plan = self.supabase.table('subscription_plans').insert({
+                    'name': 'free',
+                    'display_name': 'Free Plan',
+                    'daily_query_limit': 10,
+                    'price_monthly': 0.00,
+                    'features': ['Basic queries', 'Public documents'],
+                    'is_active': True
+                }).execute()
+                
+                if free_plan.data:
+                    self.supabase.table('user_subscriptions').insert({
+                        'user_id': user_id,
+                        'plan_id': free_plan.data[0]['id'],
+                        'status': 'active'
+                    }).execute()
+                    logger.info(f"Created free plan and assigned to user {user_id}")
+                
         except Exception as e:
             logger.error(f"Error assigning free plan: {str(e)}")
-    
-    async def get_subscription_plans(self) -> list:
-        """Get all available subscription plans"""
-        try:
-            result = self.supabase.table('subscription_plans').select(
-                'id, name, display_name, daily_query_limit, price_monthly, features'
-            ).eq('is_active', True).order('price_monthly').execute()
-            
-            return result.data or []
-        except Exception as e:
-            logger.error(f"Error getting subscription plans: {str(e)}")
-            return []
-    
+            # Don't raise the exception - let the rate limiting continue with fallback
+        
     async def upgrade_user_subscription(self, user_id: str, plan_name: str) -> bool:
         """Upgrade user to a specific plan"""
         try:
