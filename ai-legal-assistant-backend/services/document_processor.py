@@ -1,9 +1,9 @@
+import logging
 import tempfile
 import os
-from pathlib import Path
-from typing import Dict
-import logging
 from fastapi import UploadFile
+from typing import Dict
+import PyPDF2
 
 logger = logging.getLogger(__name__)
 
@@ -12,37 +12,35 @@ class DocumentProcessor:
         pass
 
     async def process_upload(self, file: UploadFile) -> Dict:
-        """Process uploaded file with proper file handling"""
         try:
-            # Create a temporary file with proper cleanup
+            # Create temporary file to store upload
             with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as temp_file:
-                # Read file content in chunks
-                content = await file.read()
-                temp_file.write(content)
-                temp_file.flush()
-                
-                # Process the temporary file
-                file_path = temp_file.name
+                temp_file_path = temp_file.name
                 
             try:
-                # Extract text from the temporary file
-                if file.filename.lower().endswith('.docx'):
-                    text_content = self._extract_text_from_docx(file_path)
-                elif file.filename.lower().endswith('.pdf'):
-                    text_content = self._extract_text_from_pdf(file_path)
-                else:
-                    # For TXT files
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        text_content = f.read()
+                # Write file content to temporary file
+                content = await file.read()
+                with open(temp_file_path, 'wb') as f:
+                    f.write(content)
                 
-                # Process the text content
+                # Extract text based on file type
+                file_extension = file.filename.split('.')[-1].lower()
+                
+                if file_extension == 'pdf':
+                    text_content = self._extract_text_from_pdf(temp_file_path)
+                elif file_extension in ['docx', 'doc']:
+                    text_content = self._extract_text_from_docx(temp_file_path)
+                elif file_extension == 'txt':
+                    with open(temp_file_path, 'r', encoding='utf-8') as f:
+                        text_content = f.read()
+                else:
+                    raise Exception(f"Unsupported file type: {file_extension}")
+                
                 result = {
-                    'filename': file.filename,
-                    'file_type': Path(file.filename).suffix,
-                    'text_content': text_content,
-                    'size_bytes': len(content),
-                    'character_count': len(text_content),
-                    'word_count': len(text_content.split())
+                    "filename": file.filename,
+                    "file_type": file_extension,
+                    "text_content": text_content,
+                    "character_count": len(text_content)
                 }
                 
                 return result
@@ -50,9 +48,9 @@ class DocumentProcessor:
             finally:
                 # Clean up temporary file
                 try:
-                    os.unlink(file_path)
+                    os.unlink(temp_file_path)
                 except Exception as e:
-                    logger.warning(f"Failed to clean up temporary file: {e}")
+                    logger.warning(f"Failed to delete temporary file: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Error processing upload: {str(e)}")
@@ -79,8 +77,6 @@ class DocumentProcessor:
     def _extract_text_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file with proper error handling"""
         try:
-            import PyPDF2
-            
             with open(file_path, 'rb') as pdf_file:
                 pdf_reader = PyPDF2.PdfReader(pdf_file)
                 text_content = []
@@ -97,6 +93,30 @@ class DocumentProcessor:
     async def process_document_full_pipeline(self, file: UploadFile, user_id: str) -> Dict:
         """Process document through full pipeline with proper file handling"""
         try:
+            # ADD SUBSCRIPTION CHECKS BEFORE PROCESSING
+            from services.enhanced_subscription_service import EnhancedSubscriptionService
+            subscription_service = EnhancedSubscriptionService()
+            
+            # Read file content to check size first
+            content = await file.read()
+            await file.seek(0)  # Reset file pointer for processing
+            document_size_mb = len(content) / (1024 * 1024)
+            
+            # Check subscription limits before processing
+            subscription = await subscription_service.get_user_subscription_details(user_id)
+            if not subscription:
+                raise Exception("No active subscription found")
+            
+            # Check document size limit
+            if not await subscription_service.check_document_size_limit(user_id, document_size_mb):
+                raise Exception(f"Document size ({document_size_mb:.2f}MB) exceeds your plan limit ({subscription['max_document_size_mb']}MB)")
+            
+            # Check document count limit
+            if not await subscription_service.check_document_count_limit(user_id):
+                storage_info = await subscription_service.get_user_storage_info(user_id)
+                raise Exception(f"Document count limit reached ({storage_info['document_count']}/{subscription['max_documents_per_user']})")
+            # END OF SUBSCRIPTION CHECKS
+            
             # Process the upload first
             document_data = await self.process_upload(file)
             
@@ -126,6 +146,9 @@ class DocumentProcessor:
             document_id = await vector_store.store_processed_document(
                 user_id, document_data, chunks_with_embeddings
             )
+            
+            # UPDATE STORAGE USAGE AFTER SUCCESSFUL PROCESSING
+            await subscription_service.update_user_storage(user_id, document_size_mb, increment=True)
             
             return {
                 "document_id": document_id,

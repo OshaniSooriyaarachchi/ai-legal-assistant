@@ -112,7 +112,8 @@ class RAGService:
                                      session_id: str = None,
                                      include_public: bool = True,
                                      include_user_docs: bool = True,
-                                     conversation_history: str = "") -> Dict:
+                                     conversation_history: str = "",
+                                     user_type: str = "normal") -> Dict:
         """
         Generate response using hybrid search across multiple sources.
         
@@ -123,6 +124,7 @@ class RAGService:
             include_public: Whether to search public knowledge base
             include_user_docs: Whether to search user documents
             conversation_history: Previous conversation context
+            user_type: Type of user ("normal" or "lawyer") for response styling
             
         Returns:
             Generated response with categorized sources
@@ -153,12 +155,13 @@ class RAGService:
             # Get session context if available
             session_context = search_results.get('session_context', '')
             
-            # Generate response using Gemini with hybrid context
-            response = await self._generate_with_hybrid_context(
+            # Generate response using Gemini with hybrid context and user type
+            response = await self._generate_with_hybrid_context_and_user_type(
                 query=query,
                 context=context,
                 session_context=session_context,
-                conversation_history=conversation_history
+                conversation_history=conversation_history,
+                user_type=user_type
             )
             
             # Prepare response with source attribution
@@ -231,6 +234,40 @@ class RAGService:
             
         except Exception as e:
             logger.error(f"Error generating response with hybrid context: {str(e)}")
+            raise Exception(f"Failed to generate response: {str(e)}")
+
+    async def _generate_with_hybrid_context_and_user_type(self, query: str, context: str, 
+                                                        session_context: str = "",
+                                                        conversation_history: str = "",
+                                                        user_type: str = "normal") -> str:
+        """Generate response using hybrid context with user type consideration"""
+        try:
+            # Create user-type-aware prompt
+            prompt = self.prompt_templates.create_hybrid_rag_prompt_with_user_type(
+                query=query,
+                context=context,
+                user_type=user_type,
+                session_context=session_context,
+                conversation_history=conversation_history
+            )
+            
+            # Adjust generation config based on user type
+            if user_type == "lawyer":
+                generation_config = genai.types.GenerationConfig(
+                    temperature=0.3,  # Lower temperature for more precise legal language
+                    max_output_tokens=3000,  # Allow more tokens for detailed analysis
+                )
+            else:
+                generation_config = genai.types.GenerationConfig(
+                    temperature=0.7,  # Higher temperature for more natural explanations
+                    max_output_tokens=2048,
+                )
+            
+            response = self.model.generate_content(prompt, generation_config=generation_config)
+            return response.text
+            
+        except Exception as e:
+            logger.error(f"Error generating response with user type context: {str(e)}")
             raise Exception(f"Failed to generate response: {str(e)}")
 
     def _build_context(self, relevant_chunks: List[Dict]) -> str:

@@ -71,15 +71,23 @@ const initialState: ChatState = {
 
 export const sendMessage = createAsyncThunk(
   'chat/sendMessage',
-  async (query: string, { getState, dispatch, rejectWithValue }) => {
+  async ({ query, userType = 'normal' }: { query: string; userType?: string }, { getState, dispatch, rejectWithValue }) => {
     try {
       const state = getState() as { chat: ChatState };
-      const sessionId = state.chat.currentSessionId;
+      let sessionId = state.chat.currentSessionId;
+      
+      // If no session exists, create one first
+      if (!sessionId) {
+        const sessionResponse = await ApiService.createChatSession();
+        sessionId = sessionResponse.session.id;
+        // Update the session in the state
+        dispatch(setCurrentSession(sessionId));
+      }
       
       // Check if this is the first message in the session
       const isFirstMessage = state.chat.messages.length === 0;
       
-      const response = await ApiService.sendMessage(sessionId || '', query);
+      const response = await ApiService.sendMessage(sessionId!, query, true, userType);
       
       // If this was the first message, reload sessions to get the updated title
       if (isFirstMessage && sessionId) {
@@ -283,7 +291,7 @@ const chatSlice = createSlice({
         const timestamp = new Date().toISOString();
         const userMessage: Message = {
           id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          content: action.meta.arg,
+          content: action.meta.arg.query,
           sender: 'user',
           timestamp,
         };

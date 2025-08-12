@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../app/hooks';
 import { createChatSession, loadChatSessions, loadChatHistory, setCurrentSession, clearChatLocal, deleteChatSession } from '../features/chat/chatSlice';
+import ReviewModal from './ReviewModal';
+import { ApiService } from '../services/api';
 
 interface ChatSessionListProps {
   onSessionSelect?: (sessionId: string) => void;
@@ -8,21 +10,70 @@ interface ChatSessionListProps {
 
 export const ChatSessionList: React.FC<ChatSessionListProps> = ({ onSessionSelect }) => {
   const dispatch = useAppDispatch();
-  const { sessions, currentSessionId, loading } = useAppSelector(state => state.chat);
+  const { sessions, currentSessionId, loading, messages } = useAppSelector(state => state.chat);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [sessionToReview, setSessionToReview] = useState<string | null>(null);
+  const [pendingNewChat, setPendingNewChat] = useState(false);
+  const [prevSessionTitle, setPrevSessionTitle] = useState<string | undefined>();
+
+  const shouldOfferReview = async (sessionId: string) => {
+    try {
+      // Require at least one user-assistant exchange (messages >= 2)
+      if (!messages || messages.length < 2) return false;
+      const res = await ApiService.getSessionReview(sessionId);
+      return !res.has_review;
+    } catch (e) {
+      return false;
+    }
+  };
 
   useEffect(() => {
     dispatch(loadChatSessions());
   }, [dispatch]);
 
-  const handleNewChat = async () => {
+  const startNewChat = async () => {
     try {
       const result = await dispatch(createChatSession()).unwrap();
       dispatch(setCurrentSession(result.id));
       onSessionSelect?.(result.id);
     } catch (error) {
       console.error('Failed to create new chat session:', error);
+    } finally {
+      setPendingNewChat(false);
     }
+  };
+
+  const handleNewChat = async () => {
+    // If there is a current session and user has at least one existing session before creating a new one
+    if (currentSessionId && sessions.length > 0) {
+      const existingSession = sessions.find(s => s.id === currentSessionId);
+      if (existingSession) {
+        const offer = await shouldOfferReview(currentSessionId);
+        if (offer) {
+          setSessionToReview(currentSessionId);
+          setPrevSessionTitle(existingSession.title);
+          setShowReviewModal(true);
+          setPendingNewChat(true);
+          return; // Wait for review
+        }
+      }
+    }
+    await startNewChat();
+  };
+
+  const handleSubmitReview = async (rating: number, comment: string) => {
+    if (!sessionToReview) return;
+    await ApiService.submitSessionReview(sessionToReview, { rating, comment });
+    setShowReviewModal(false);
+    if (pendingNewChat) await startNewChat();
+  };
+
+  const handleSkipReview = async () => {
+    if (!sessionToReview) return;
+    await ApiService.submitSessionReview(sessionToReview, { skipped: true });
+    setShowReviewModal(false);
+    if (pendingNewChat) await startNewChat();
   };
 
   const handleSessionClick = async (sessionId: string) => {
@@ -164,6 +215,13 @@ export const ChatSessionList: React.FC<ChatSessionListProps> = ({ onSessionSelec
           {sessions.length} chat{sessions.length !== 1 ? 's' : ''} total
         </div>
       </div>
+      <ReviewModal
+        isOpen={showReviewModal}
+        onSubmit={handleSubmitReview}
+        onSkip={handleSkipReview}
+        onClose={() => setShowReviewModal(false)}
+        sessionTitle={prevSessionTitle}
+      />
     </div>
   );
 };

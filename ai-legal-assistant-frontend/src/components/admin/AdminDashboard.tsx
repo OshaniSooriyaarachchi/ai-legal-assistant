@@ -5,6 +5,7 @@ import AdminDocumentList from './AdminDocumentList';
 import AdminStatistics from './AdminStatistics';
 import AdminUserChatList from './AdminUserChatList';
 import AdminUserDocuments from './AdminUserDocuments';
+import AdminPackageManagement from './AdminPackageManagement';
 
 interface TabType {
   id: string;
@@ -47,6 +48,7 @@ const AdminDashboard: React.FC = () => {
   const tabs: TabType[] = [
     { id: 'upload', label: 'Upload Documents', component: DocumentUploadAdmin },
     { id: 'manage', label: 'Manage Documents', component: AdminDocumentList },
+    { id: 'packages', label: 'Manage Packages', component: AdminPackageManagement },
     { id: 'user-chats', label: 'User Chats', component: AdminUserChatList },
     { id: 'user-documents', label: 'User Documents', component: AdminUserDocuments },
     { id: 'statistics', label: 'Statistics', component: AdminStatistics },

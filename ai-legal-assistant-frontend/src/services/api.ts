@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase';
 
 // Use environment variable for backend URL
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
 
 // Subscription-related interfaces
 export interface SubscriptionPlan {
@@ -30,6 +30,28 @@ export interface UsageInfo {
   daily_limit: number;
   remaining_queries: number;
   subscription: UserSubscription;
+}
+
+// Admin Package Management interfaces
+export interface PackageFormData {
+  name: string;
+  display_name: string;
+  daily_query_limit: number;
+  max_document_size_mb: number;
+  max_documents_per_user: number;
+  price_monthly: number;
+  features: string[];
+  is_active: boolean;
+}
+
+export interface AdminPackage extends PackageFormData {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  created_by: string;
+  is_custom: boolean;
+  active_subscriptions?: number;
+  created_by_email?: string;
 }
 
 // Custom error class for rate limiting
@@ -110,8 +132,8 @@ export class ApiService {
     return {};
   }
 
-  // Updated sendMessage method with rate limiting
-  static async sendMessage(sessionId: string, message: string, includePublic = true): Promise<any> {
+  // Updated sendMessage method with rate limiting and user type
+  static async sendMessage(sessionId: string, message: string, includePublic = true, userType = 'normal'): Promise<any> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/message`, {
       method: 'POST',
@@ -120,6 +142,7 @@ export class ApiService {
         query: message,
         include_public: includePublic,
         include_user_docs: false,
+        user_type: userType,
       }),
     });
     
@@ -226,6 +249,35 @@ export class ApiService {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
+    return response.json();
+  }
+
+  // Chat session review endpoints
+  static async getSessionReview(sessionId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/review`, { headers });
+    if (!response.ok) {
+      if (response.status === 404) {
+        return { has_review: false };
+      }
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  static async submitSessionReview(sessionId: string, data: { rating?: number; comment?: string; skipped?: boolean }) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/review`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    });
+    if (response.status === 409) {
+      return { alreadyExists: true };
+    }
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
     return response.json();
   }
 
@@ -405,16 +457,100 @@ export class ApiService {
     const response = await fetch(`${this.baseURL}/api/usage/history?days=${days}`, {
       headers,
     });
-    
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    
+
     return response.json();
   }
-}
 
-// Export default instance for easier imports
+  // Admin Package Management endpoints
+  static async getAdminPackages() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/packages`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async createPackage(packageData: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/packages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(packageData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async updatePackage(packageId: string, packageData: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/packages/${packageId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(packageData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async deletePackage(packageId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/packages/${packageId}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async assignPackageToUser(userId: string, packageId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/assign-package`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ user_id: userId, package_id: packageId })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getUserUsageStats(userId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/users/${userId}/usage`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+}// Export default instance for easier imports
 export const api = {
   get: async (endpoint: string) => {
     const headers = await ApiService.getAuthHeaders();

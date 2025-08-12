@@ -5,12 +5,15 @@ import { RateLimitError } from '../services/api';
 import MessageBubble from './MessageBubble';
 import { useSelector, useDispatch } from 'react-redux';
 import RateLimitModal from './RateLimitModal';
+import { UserTypeSelector } from './UserTypeSelector';
+import { useUserTypeContext } from '../contexts/UserTypeContext';
 
 const ChatInterface: React.FC = () => {
   const dispatch = useDispatch();
   const { rateLimitError, rateLimitErrorData } = useSelector((state: any) => state.chat);
   const appDispatch = useAppDispatch();
   const { messages, loading, uploadedDocuments, currentSessionId, isClearingHistory, error } = useAppSelector((state) => state.chat);
+  const { userType } = useUserTypeContext();
   const [input, setInput] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [showRateLimitModal, setShowRateLimitModal] = useState(false);
@@ -74,7 +77,7 @@ const ChatInterface: React.FC = () => {
         setInput(''); // Clear input immediately to prevent double submission
 
         try {
-          await appDispatch(sendMessage(userMessage)).unwrap();
+          await appDispatch(sendMessage({ query: userMessage, userType })).unwrap();
         } catch (error: any) {
           console.error('Failed to send message:', error);
           
@@ -133,8 +136,13 @@ const ChatInterface: React.FC = () => {
       {/* Chat Header */}
       <div className="bg-blue-600 text-white p-4 flex justify-between items-center">
         <h3 className="font-semibold">AI Legal Assistant</h3>
-        <div className="flex space-x-2">
-          {uploadedDocuments.length > 0 && (
+        
+        {/* User Type Selector */}
+        <div className="flex-1 flex justify-center">
+          <UserTypeSelector />
+        </div>
+        
+        <div className="flex space-x-2">{uploadedDocuments.length > 0 && (
             <span className="text-blue-200 text-sm">
               {uploadedDocuments.length} document{uploadedDocuments.length > 1 ? 's' : ''} uploaded
             </span>

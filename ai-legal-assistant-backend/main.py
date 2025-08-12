@@ -1,10 +1,18 @@
+import sys
+import os
+from pathlib import Path
+
+
+current_dir = Path(__file__).parent
+sys.path.insert(0, str(current_dir))
+
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
-import os
 import logging
 import time
 import jwt
@@ -19,6 +27,13 @@ from config.settings import settings
 
 from services.rate_limiting_service import RateLimitingService
 from api.rate_limit_middleware import check_query_rate_limit, increment_query_count
+
+from services.admin_package_service import AdminPackageService
+from services.enhanced_subscription_service import EnhancedSubscriptionService
+
+
+from pydantic import BaseModel
+from typing import List
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +65,7 @@ class ChatRequest(BaseModel):
     query: str
     include_public: bool = True
     include_user_docs: bool = True
+    user_type: Optional[str] = "normal"  # "normal" or "lawyer"
 
 class ChatResponse(BaseModel):
     response: str
@@ -77,6 +93,46 @@ class ChatSessionResponse(BaseModel):
     title: str
     created_at: str
     updated_at: str
+
+# Review models
+class ChatReviewRequest(BaseModel):
+    rating: Optional[int] = None
+    comment: Optional[str] = None
+    skipped: bool = False
+
+class ChatReviewResponse(BaseModel):
+    id: str
+    session_id: str
+    user_id: str
+    rating: Optional[int]
+    comment: Optional[str]
+    skipped: bool
+    created_at: str
+
+# Admin Package Management Models
+class PackageCreateRequest(BaseModel):
+    name: str
+    display_name: str
+    daily_query_limit: int  # -1 for unlimited
+    max_document_size_mb: int
+    max_documents_per_user: int
+    price_monthly: float
+    features: List[str]
+    is_active: bool = True
+
+class PackageUpdateRequest(BaseModel):
+    name: str
+    display_name: str
+    daily_query_limit: int
+    max_document_size_mb: int
+    max_documents_per_user: int
+    price_monthly: float
+    features: List[str]
+    is_active: bool
+
+class AssignPackageRequest(BaseModel):
+    user_id: str
+    package_id: str
 
 # Initialize services
 document_processor = DocumentProcessor()
@@ -467,7 +523,8 @@ async def send_chat_message(
             user_id=current_user.id,
             session_id=session_id,
             include_public=request.include_public,
-            include_user_docs=False
+            include_user_docs=False,
+            user_type=request.user_type
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -502,6 +559,86 @@ async def send_chat_message(
     except Exception as e:
         logger.error(f"Chat message failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
+
+# =============================================================================
+# CHAT SESSION REVIEW ENDPOINTS
+# =============================================================================
+
+@app.get("/api/chat/sessions/{session_id}/review", response_model=dict)
+async def get_chat_session_review(
+    session_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get existing review (or skip) status for a chat session for current user."""
+    try:
+        supabase = get_supabase_client()
+
+        # Verify ownership of session
+        session_res = supabase.table('chat_sessions').select('id, user_id').eq('id', session_id).eq('user_id', current_user.id).execute()
+        if not session_res.data:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+        review_res = supabase.table('chat_session_reviews').select(
+            'id, session_id, user_id, rating, comment, skipped, created_at'
+        ).eq('session_id', session_id).eq('user_id', current_user.id).limit(1).execute()
+
+        if review_res.data:
+            review = review_res.data[0]
+            return {"status": "success", "has_review": True, "review": review}
+        else:
+            return {"status": "success", "has_review": False, "review": None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get chat session review: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get review")
+
+
+@app.post("/api/chat/sessions/{session_id}/review", response_model=dict)
+async def submit_chat_session_review(
+    session_id: str,
+    review: ChatReviewRequest,
+    current_user = Depends(get_current_user)
+):
+    """Submit a review or mark skip for the chat session. Only one per user per session."""
+    try:
+        supabase = get_supabase_client()
+
+        # Ownership check
+        session_res = supabase.table('chat_sessions').select('id, user_id').eq('id', session_id).eq('user_id', current_user.id).execute()
+        if not session_res.data:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+        # Validate rating unless skipped
+        if not review.skipped:
+            if review.rating is None:
+                raise HTTPException(status_code=400, detail="Rating required unless skipped")
+            if review.rating < 1 or review.rating > 5:
+                raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
+
+        # Check existing review
+        existing = supabase.table('chat_session_reviews').select('id').eq('session_id', session_id).eq('user_id', current_user.id).limit(1).execute()
+        if existing.data:
+            raise HTTPException(status_code=409, detail="Review already submitted")
+
+        insert_data = {
+            'session_id': session_id,
+            'user_id': current_user.id,
+            'rating': review.rating,
+            'comment': review.comment,
+            'skipped': review.skipped
+        }
+        inserted = supabase.table('chat_session_reviews').insert(insert_data).execute()
+        if not inserted.data:
+            raise HTTPException(status_code=500, detail="Failed to save review")
+
+        return {"status": "success", "review": inserted.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to submit chat session review: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to submit review")
 
 
 
@@ -605,7 +742,8 @@ async def chat_query(
             query=request.query,
             user_id=current_user.id,
             include_public=request.include_public,
-            include_user_docs=False  # only search current session + public
+            include_user_docs=False,  # only search current session + public
+            user_type=request.user_type
         )
         
         processing_time = int((time.time() - start_time) * 1000)
@@ -1329,3 +1467,142 @@ async def get_usage_history(
     except Exception as e:
         logger.error(f"Error getting usage history: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get usage history")    
+
+
+# Admin helper function
+async def check_admin_access(current_user):
+    """Check if user has admin access using user_roles table"""
+    try:
+        supabase = get_supabase_client()
+        result = supabase.table('user_roles').select('role').eq('user_id', current_user.id).eq('role', 'admin').eq('is_active', True).execute()
+        
+        if not result.data or len(result.data) == 0:
+            raise HTTPException(status_code=403, detail="Admin access required")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking admin access: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to verify admin access")
+
+# ADMIN ENDPOINTS
+@app.post("/api/admin/packages")
+async def create_package(
+    package_data: PackageCreateRequest,
+    current_user = Depends(get_current_user)
+):
+    """Create a new subscription package (Admin only)"""
+    try:
+        await check_admin_access(current_user)
+        
+        admin_service = AdminPackageService()
+        package_id = await admin_service.create_custom_package(
+            current_user.id,
+            package_data.dict()
+        )
+        return {"success": True, "package_id": package_id, "message": "Package created successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/admin/packages")
+async def get_all_packages(current_user = Depends(get_current_user)):
+    """Get all packages for admin dashboard"""
+    try:
+        await check_admin_access(current_user)
+        
+        admin_service = AdminPackageService()
+        packages = await admin_service.get_all_packages(current_user.id)
+        return {"packages": packages}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/admin/packages/{package_id}")
+async def update_package(
+    package_id: str,
+    package_data: PackageUpdateRequest,
+    current_user = Depends(get_current_user)
+):
+    """Update an existing package"""
+    try:
+        await check_admin_access(current_user)
+        
+        admin_service = AdminPackageService()
+        success = await admin_service.update_package(
+            package_id, 
+            current_user.id,
+            package_data.dict()
+        )
+        return {"success": success, "message": "Package updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/admin/packages/{package_id}")
+async def delete_package(
+    package_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete/deactivate a package"""
+    try:
+        await check_admin_access(current_user)
+        
+        admin_service = AdminPackageService()
+        success = await admin_service.delete_package(package_id, current_user.id)
+        return {"success": success, "message": "Package deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/admin/assign-package")
+async def assign_package_to_user(
+    assignment: AssignPackageRequest,
+    current_user = Depends(get_current_user)
+):
+    """Assign a package to a user"""
+    try:
+        await check_admin_access(current_user)
+        
+        admin_service = AdminPackageService()
+        success = await admin_service.assign_package_to_user(
+            assignment.user_id,
+            assignment.package_id,
+            current_user.id
+        )
+        return {"success": success, "message": "Package assigned successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/admin/users/{user_id}/usage")
+async def get_user_usage_stats(
+    user_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get usage statistics for a specific user"""
+    try:
+        await check_admin_access(current_user)
+        
+        subscription_service = EnhancedSubscriptionService()
+        stats = await subscription_service.get_comprehensive_usage_stats(user_id)
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# USER ENDPOINTS (for viewing packages)
+@app.get("/packages")
+async def get_available_packages():
+    """Get available packages for users to see"""
+    try:
+        admin_service = AdminPackageService()
+        packages = await admin_service.get_all_packages()  # No admin_user_id = only active packages
+        return {"packages": packages}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/my-subscription")
+async def get_my_subscription(current_user = Depends(get_current_user)):
+    """Get current user's subscription details"""
+    try:
+        subscription_service = EnhancedSubscriptionService()
+        stats = await subscription_service.get_comprehensive_usage_stats(current_user.id)
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
