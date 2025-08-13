@@ -45,11 +45,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+from api import signup
+
 app = FastAPI(
     title="AI Legal Assistant API",
     description="Backend API for AI-powered legal document assistant with hybrid search",
     version="2.0.0"
 )
+
+# Register signup router
+app.include_router(signup.router)
 
 # Configure CORS
 app.add_middleware(

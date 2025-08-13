@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { supabase } from '../../lib/supabase';
+import { ApiService } from '../../services/api';
 import { AuthState, User } from './types';
 
 const initialState: AuthState = {
@@ -14,13 +15,10 @@ export const signUp = createAsyncThunk(
   'auth/signUp',
   async ({ email, password }: { email: string; password: string }, { rejectWithValue }) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-      
-      if (error) throw error;
-      return data.user;
+  // Use backend to sign up and send verification email
+  await ApiService.signupWithEmail(email, password);
+  // No session/user returned until email is verified
+  return null;
     } catch (error: any) {
       return rejectWithValue(error.message || 'Failed to sign up');
     }
@@ -133,10 +131,10 @@ const authSlice = createSlice({
       state.isLoading = true;
       state.error = null;
     });
-    builder.addCase(signUp.fulfilled, (state, action) => {
+    builder.addCase(signUp.fulfilled, (state) => {
       state.isLoading = false;
-      state.user = action.payload;
-      state.isAuthenticated = action.payload !== null;
+      state.user = null;
+      state.isAuthenticated = false; // stays false until verification/login
     });
     builder.addCase(signUp.rejected, (state, action) => {
       state.isLoading = false;

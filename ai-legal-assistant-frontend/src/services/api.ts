@@ -82,6 +82,20 @@ export class ApiService {
     return response.json();
   }
 
+  // Auth: Email/password signup hits backend to trigger verification email
+  static async signupWithEmail(email: string, password: string) {
+    const response = await fetch(`${this.baseURL}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Signup failed' }));
+      throw new Error(err.detail || 'Signup failed');
+    }
+    return response.json();
+  }
+
   static async getAdminStatistics() {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/admin/statistics`, {

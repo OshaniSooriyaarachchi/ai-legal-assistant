@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAppDispatch, useAppSelector } from '../../app/hooks';
 import { signUp, clearError } from '../../features/auth/authSlice';
 import { supabase } from '../../lib/supabase';
-import { checkEmailExists } from '../../utils/authUtils';
 
 const SignUp: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -39,17 +38,17 @@ const SignUp: React.FC = () => {
       return;
     }
 
-    // Check if email already exists
-    const emailExists = await checkEmailExists(email);
-    if (emailExists) {
-      setValidationError('An account with this email already exists. Please log in instead.');
-      return;
-    }
+  // Optional: email existence check (may be rate-limited or imprecise)
+  // const emailExists = await checkEmailExists(email);
+  // if (emailExists) {
+  //   setValidationError('An account with this email already exists. Please log in instead.');
+  //   return;
+  // }
     
     const resultAction = await dispatch(signUp({ email, password }));
     if (signUp.fulfilled.match(resultAction)) {
       // Success - navigate to verification page or login
-      window.alert('Please check your email to confirm your account');
+  window.alert('Verification email sent. Please check your inbox to confirm your account.');
       navigate('/login');
     }
   };
