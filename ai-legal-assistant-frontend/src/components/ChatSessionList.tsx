@@ -103,19 +103,52 @@ export const ChatSessionList: React.FC<ChatSessionListProps> = ({ onSessionSelec
   };
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - date.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    try {
+      const date = new Date(dateString);
+      
+      // Check if the date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid date';
+      }
+      
+      const now = new Date();
+      
+      // Get dates at midnight in local timezone for proper day comparison
+      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      
+      // Calculate difference in days
+      const diffTime = todayMidnight.getTime() - dateMidnight.getTime();
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
 
-    if (diffDays === 1) {
-      return 'Today';
-    } else if (diffDays === 2) {
-      return 'Yesterday';
-    } else if (diffDays <= 7) {
-      return `${diffDays - 1} days ago`;
-    } else {
-      return date.toLocaleDateString();
+      if (diffDays === 0) {
+        // Same day - show relative time if recent, otherwise "Today"
+        const timeDiff = now.getTime() - date.getTime();
+        const hoursDiff = timeDiff / (1000 * 60 * 60);
+        
+        if (hoursDiff < 1) {
+          const minutesDiff = Math.floor(timeDiff / (1000 * 60));
+          if (minutesDiff < 1) return 'Just now';
+          return `${minutesDiff} minutes ago`;
+        } else if (hoursDiff < 24) {
+          return `${Math.floor(hoursDiff)} hours ago`;
+        } else {
+          return 'Today';
+        }
+      } else if (diffDays === 1) {
+        return 'Yesterday';
+      } else if (diffDays > 1 && diffDays <= 7) {
+        return `${Math.floor(diffDays)} days ago`;
+      } else if (diffDays < 0) {
+        // Future date
+        return 'Future date';
+      } else {
+        // More than a week ago
+        return date.toLocaleDateString();
+      }
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Invalid date';
     }
   };
 

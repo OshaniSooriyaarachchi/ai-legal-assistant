@@ -147,7 +147,7 @@ export class ApiService {
   }
 
   // Updated sendMessage method with rate limiting and user type
-  static async sendMessage(sessionId: string, message: string, includePublic = true, userType = 'normal'): Promise<any> {
+  static async sendMessage(sessionId: string, message: string, includePublic = true, userType = 'normal', includeUserDocs = true): Promise<any> {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/chat/sessions/${sessionId}/message`, {
       method: 'POST',
@@ -155,7 +155,7 @@ export class ApiService {
       body: JSON.stringify({
         query: message,
         include_public: includePublic,
-        include_user_docs: false,
+        include_user_docs: includeUserDocs,
         user_type: userType,
       }),
     });
@@ -556,6 +556,168 @@ export class ApiService {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/admin/users/${userId}/usage`, {
       headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  // =============================================================================
+  // PROMPT MANAGEMENT METHODS
+  // =============================================================================
+
+  static async getAllPromptTemplates() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getPromptTemplate(templateId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async createPromptTemplate(templateData: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(templateData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async updatePromptTemplate(templateId: string, templateData: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(templateData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async deletePromptTemplate(templateId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getPromptCategories() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/categories`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getPromptUserTypes() {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/user-types`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async testPromptTemplate(templateData: any) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/test`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(templateData)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async getPromptVersionHistory(templateId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}/versions`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async restorePromptVersion(templateId: string, versionNumber: number) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}/restore/${versionNumber}`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async duplicatePromptTemplate(templateId: string, newName: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}/duplicate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ new_name: newName })
     });
 
     if (!response.ok) {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import DocumentUploadAdmin from './DocumentUploadAdmin';
 import AdminDocumentList from './AdminDocumentList';
@@ -6,6 +7,7 @@ import AdminStatistics from './AdminStatistics';
 import AdminUserChatList from './AdminUserChatList';
 import AdminUserDocuments from './AdminUserDocuments';
 import AdminPackageManagement from './AdminPackageManagement';
+import AdminPromptManagement from './AdminPromptManagement';
 
 interface TabType {
   id: string;
@@ -17,6 +19,7 @@ const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState('upload');
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     checkAdminStatus();
@@ -48,6 +51,7 @@ const AdminDashboard: React.FC = () => {
   const tabs: TabType[] = [
     { id: 'upload', label: 'Upload Documents', component: DocumentUploadAdmin },
     { id: 'manage', label: 'Manage Documents', component: AdminDocumentList },
+    { id: 'prompts', label: 'Manage Prompts', component: AdminPromptManagement },
     { id: 'packages', label: 'Manage Packages', component: AdminPackageManagement },
     { id: 'user-chats', label: 'User Chats', component: AdminUserChatList },
     { id: 'user-documents', label: 'User Documents', component: AdminUserDocuments },
@@ -73,9 +77,17 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-        <p className="text-gray-600 mt-2">Manage the legal knowledge base</p>
+      <div className="mb-8 flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+          <p className="text-gray-600 mt-2">Manage the legal knowledge base</p>
+        </div>
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+        >
+          ← Back to Chat
+        </button>
       </div>
 
       {/* Tab Navigation */}

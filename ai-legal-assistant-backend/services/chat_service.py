@@ -165,37 +165,14 @@ class ChatService:
         try:
             import google.generativeai as genai
             from config.settings import settings
+            from services.prompt_management_service import PromptManagementService
             
             genai.configure(api_key=settings.gemini_api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt_service = PromptManagementService()
             
-            prompt = f"""
-            Generate a meaningful, descriptive title for a legal chat conversation that starts with this message:
-            
-            "{message}"
-            
-            Requirements:
-            - Maximum 50 characters total
-            - Capture the main legal topic, not just the first few words
-            - Be specific and meaningful
-            - Use legal terminology when appropriate
-            - Return only the title, no quotes or explanation
-            
-            Examples of GOOD titles:
-            - "Employment Contract Review"
-            - "Property Dispute Resolution" 
-            - "Intellectual Property Rights"
-            - "Corporate Compliance Issue"
-            - "Tenant Rights Question"
-            - "Business Formation Help"
-            - "Privacy Law Compliance"
-            - "Tax Law Consultation"
-            
-            Examples of BAD titles (avoid these):
-            - "I need help with my..."
-            - "Can you help me..."
-            - "What should I do about..."
-            """
+            # Use dynamic prompt
+            prompt = await prompt_service.format_prompt('chat_title_generation', {'message': message})
             
             response = model.generate_content(prompt)
             title = response.text.strip().replace('"', '').replace("'", "")

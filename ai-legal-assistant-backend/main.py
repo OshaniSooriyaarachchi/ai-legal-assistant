@@ -30,6 +30,7 @@ from api.rate_limit_middleware import check_query_rate_limit, increment_query_co
 
 from services.admin_package_service import AdminPackageService
 from services.enhanced_subscription_service import EnhancedSubscriptionService
+from services.prompt_management_service import PromptManagementService
 
 
 from pydantic import BaseModel
@@ -140,12 +141,38 @@ class AssignPackageRequest(BaseModel):
     user_id: str
     package_id: str
 
+# Prompt Management Models
+class PromptTemplateRequest(BaseModel):
+    name: str
+    title: str
+    description: Optional[str] = ""
+    template_content: str
+    placeholders: List[str] = []
+    category: str = "system"
+    user_type: str = "all"  # "all", "normal", "lawyer"
+    is_active: bool = True
+
+class PromptTemplateUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    template_content: Optional[str] = None
+    placeholders: Optional[List[str]] = None
+    category: Optional[str] = None
+    user_type: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class PromptFormatRequest(BaseModel):
+    template_name: str
+    variables: dict
+    user_type: str = "all"
+
 # Initialize services
 document_processor = DocumentProcessor()
 embedding_service = EmbeddingService()
 vector_store = VectorStore()
 rag_service = RAGService()
 rate_limiting_service = RateLimitingService()
+prompt_management_service = PromptManagementService()
 
 # Initialize security
 security = HTTPBearer()
@@ -1612,3 +1639,365 @@ async def get_my_subscription(current_user = Depends(get_current_user)):
         return stats
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# =============================================================================
+# PROMPT MANAGEMENT ENDPOINTS (ADMIN)
+# =============================================================================
+
+@app.get("/api/admin/prompts")
+async def get_all_prompt_templates(current_user = Depends(get_current_user)):
+    """Get all prompt templates for admin management"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        templates = await prompt_management_service.get_all_prompt_templates(current_user.id)
+        
+        return {
+            "status": "success",
+            "templates": templates,
+            "total": len(templates)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt templates: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get prompt templates: {str(e)}")
+
+@app.post("/api/admin/prompts")
+async def create_prompt_template(
+    prompt_data: PromptTemplateRequest,
+    current_user = Depends(get_current_user)
+):
+    """Create a new prompt template"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        template_id = await prompt_management_service.create_prompt_template(
+            current_user.id, 
+            prompt_data.dict()
+        )
+        
+        return {
+            "status": "success",
+            "message": "Prompt template created successfully",
+            "template_id": template_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create prompt template: {str(e)}")
+
+@app.get("/api/admin/prompts/categories")
+async def get_prompt_categories(current_user = Depends(get_current_user)):
+    """Get all available prompt categories"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Check if prompt_templates table exists first
+        try:
+            result = supabase.table('prompt_templates').select('category').execute()
+            
+            if result.data:
+                categories = list(set([row['category'] for row in result.data if row['category']]))
+                categories.sort()
+            else:
+                categories = []
+                
+        except Exception as table_error:
+            logger.error(f"Error accessing prompt_templates table: {str(table_error)}")
+            # Return default categories if table doesn't exist
+            categories = ['system', 'legal', 'general', 'admin']
+        
+        return {
+            "status": "success",
+            "categories": categories
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt categories: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get prompt categories: {str(e)}")
+
+@app.get("/api/admin/prompts/user-types")
+async def get_prompt_user_types(current_user = Depends(get_current_user)):
+    """Get all available prompt user types"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        
+        # Check if prompt_templates table exists first
+        try:
+            result = supabase.table('prompt_templates').select('user_type').execute()
+            
+            if result.data:
+                user_types = list(set([row['user_type'] for row in result.data if row['user_type']]))
+                user_types.sort()
+            else:
+                user_types = []
+                
+        except Exception as table_error:
+            logger.error(f"Error accessing prompt_templates table: {str(table_error)}")
+            # Return default user types if table doesn't exist
+            user_types = ['all', 'admin', 'premium', 'basic']
+        
+        return {
+            "status": "success",
+            "user_types": user_types
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt user types: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get prompt user types: {str(e)}")
+
+@app.get("/api/admin/prompts/{template_id}")
+async def get_prompt_template(
+    template_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get a specific prompt template by ID"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        supabase = get_supabase_client()
+        result = supabase.table('prompt_templates').select('*').eq('id', template_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Prompt template not found")
+        
+        return {
+            "status": "success",
+            "template": result.data[0]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get prompt template: {str(e)}")
+
+@app.put("/api/admin/prompts/{template_id}")
+async def update_prompt_template(
+    template_id: str,
+    prompt_data: PromptTemplateUpdateRequest,
+    current_user = Depends(get_current_user)
+):
+    """Update an existing prompt template"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        # Only include non-None values in update
+        update_data = {k: v for k, v in prompt_data.dict().items() if v is not None}
+        
+        success = await prompt_management_service.update_prompt_template(
+            current_user.id, 
+            template_id, 
+            update_data
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Prompt template updated successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Prompt template not found")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update prompt template: {str(e)}")
+
+@app.delete("/api/admin/prompts/{template_id}")
+async def delete_prompt_template(
+    template_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a prompt template (soft delete)"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        success = await prompt_management_service.delete_prompt_template(
+            current_user.id, 
+            template_id
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Prompt template deleted successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Prompt template not found")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete prompt template: {str(e)}")
+
+@app.post("/api/admin/prompts/{template_id}/duplicate")
+async def duplicate_prompt_template(
+    template_id: str,
+    request: dict,  # {"new_name": "new_template_name"}
+    current_user = Depends(get_current_user)
+):
+    """Duplicate an existing prompt template"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        new_name = request.get("new_name")
+        if not new_name:
+            raise HTTPException(status_code=400, detail="new_name is required")
+        
+        new_template_id = await prompt_management_service.duplicate_prompt_template(
+            current_user.id, 
+            template_id, 
+            new_name
+        )
+        
+        return {
+            "status": "success",
+            "message": "Prompt template duplicated successfully",
+            "new_template_id": new_template_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error duplicating prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to duplicate prompt template: {str(e)}")
+
+@app.get("/api/admin/prompts/{template_id}/versions")
+async def get_prompt_template_versions(
+    template_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get version history for a prompt template"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        versions = await prompt_management_service.get_prompt_template_versions(
+            current_user.id, 
+            template_id
+        )
+        
+        return {
+            "status": "success",
+            "versions": versions,
+            "total": len(versions)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting prompt template versions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get prompt template versions: {str(e)}")
+
+@app.post("/api/admin/prompts/{template_id}/restore")
+async def restore_prompt_version(
+    template_id: str,
+    request: dict,  # {"version_number": 2}
+    current_user = Depends(get_current_user)
+):
+    """Restore a prompt template to a previous version"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        version_number = request.get("version_number")
+        if version_number is None:
+            raise HTTPException(status_code=400, detail="version_number is required")
+        
+        success = await prompt_management_service.restore_prompt_version(
+            current_user.id, 
+            template_id, 
+            version_number
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": f"Prompt template restored to version {version_number}"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Version not found")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error restoring prompt version: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to restore prompt version: {str(e)}")
+
+@app.post("/api/admin/prompts/test")
+async def test_prompt_formatting(
+    request: PromptFormatRequest,
+    current_user = Depends(get_current_user)
+):
+    """Test prompt template formatting with provided variables"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        formatted_prompt = await prompt_management_service.format_prompt(
+            request.template_name,
+            request.variables,
+            request.user_type
+        )
+        
+        return {
+            "status": "success",
+            "formatted_prompt": formatted_prompt,
+            "template_name": request.template_name,
+            "variables_used": request.variables
+        }
+        
+    except Exception as e:
+        logger.error(f"Error testing prompt formatting: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to test prompt formatting: {str(e)}")
+
+# =============================================================================
+# END PROMPT MANAGEMENT ENDPOINTS
+# =============================================================================
+
+

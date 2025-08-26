@@ -33,7 +33,7 @@ class HybridSearchService:
             if include_public:
                 try:
                     results['public_results'] = await self.vector_store.search_public_documents(
-                        query_embedding, limit=limit//2
+                        query_embedding, limit=limit//2, similarity_threshold=0.5  # Lower threshold
                     )
                     logger.info(f"Public search results: Found {len(results['public_results'])} documents")
                     for i, result in enumerate(results['public_results'][:3]):  # Log first 3 results
@@ -48,7 +48,7 @@ class HybridSearchService:
             if include_user_docs:
                 try:
                     results['user_results'] = await self.vector_store.search_user_documents(
-                        query_embedding, user_id, limit=limit//2
+                        query_embedding, user_id, limit=limit//2, similarity_threshold=0.5  # Lower threshold
                     )
                     logger.info(f"User search results: Found {len(results['user_results'])} documents for user_id: {user_id}")
                     if len(results['user_results']) == 0:

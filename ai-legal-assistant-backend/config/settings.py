@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     
     # Google Gemini API Configuration
     gemini_api_key: str
-    
+    gemini_api_key_backup: Optional[str] = None
+
     # Database Configuration
     database_url: str
     

@@ -32,6 +32,15 @@ const AuthListener: React.FC<{ children: React.ReactNode }> = ({ children }) => 
         } catch (error) {
           console.error('Failed to load chat sessions on session check:', error);
         }
+        
+        // Only redirect if user is on login/signup pages, not if they're on dashboard or admin
+        if (window.location.pathname === '/login' || 
+            window.location.pathname === '/signup' || 
+            window.location.pathname === '/' ||
+            window.location.pathname === '/forgot-password' ||
+            window.location.pathname === '/reset-password') {
+          navigate('/dashboard');
+        }
       }
     };
 
@@ -60,7 +69,7 @@ const AuthListener: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           console.error('Failed to load chat sessions on login:', error);
         }
         
-        if (!window.location.pathname.includes('/dashboard')) {
+        if (!window.location.pathname.includes('/dashboard') && !window.location.pathname.includes('/admin')) {
           navigate('/dashboard');
         }
       } else if (event === 'SIGNED_OUT') {

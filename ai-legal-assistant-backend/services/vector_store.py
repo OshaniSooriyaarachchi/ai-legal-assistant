@@ -2,6 +2,7 @@ import logging
 from typing import List, Dict, Optional, Tuple
 import asyncpg
 import json
+import math
 from datetime import datetime
 from config.settings import settings
 from config.supabase_client import get_supabase_client
@@ -15,6 +16,33 @@ class VectorStore:
         """Initialize vector store connection."""
         self.dimension = 768  # Gemini embedding dimension
         self.supabase = get_supabase_client()
+    
+    def _calculate_cosine_similarity(self, vector1: List[float], vector2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        try:
+            if len(vector1) != len(vector2):
+                return 0.0
+            
+            # Calculate dot product
+            dot_product = sum(a * b for a, b in zip(vector1, vector2))
+            
+            # Calculate magnitudes
+            magnitude1 = math.sqrt(sum(a * a for a in vector1))
+            magnitude2 = math.sqrt(sum(b * b for b in vector2))
+            
+            # Avoid division by zero
+            if magnitude1 == 0 or magnitude2 == 0:
+                return 0.0
+            
+            # Calculate cosine similarity
+            similarity = dot_product / (magnitude1 * magnitude2)
+            
+            # Ensure similarity is between 0 and 1
+            return max(0.0, min(1.0, similarity))
+            
+        except Exception as e:
+            logger.error(f"Error calculating cosine similarity: {str(e)}")
+            return 0.0
     
     async def store_processed_document(self, user_id: str, document_data: Dict, 
                                      chunks_with_embeddings: List[Dict], 
@@ -224,7 +252,7 @@ class VectorStore:
             logger.error(f"Error in hybrid similarity search: {str(e)}")
             raise Exception(f"Failed to perform hybrid similarity search: {str(e)}")
 
-    async def search_public_documents(self, query_embedding: List[float], limit: int = 5) -> List[Dict]:
+    async def search_public_documents(self, query_embedding: List[float], limit: int = 5, similarity_threshold: float = 0.7) -> List[Dict]:
         """Search public documents (common knowledge base)"""
         try:
             # Convert embedding to string format for pgvector
@@ -233,7 +261,7 @@ class VectorStore:
             # Search using RPC function for vector similarity
             result = self.supabase.rpc('search_public_documents', {
                 'query_embedding': embedding_str,
-                'match_threshold': 0.7,
+                'match_threshold': similarity_threshold,
                 'match_count': limit
             }).execute()
             
@@ -241,38 +269,54 @@ class VectorStore:
                 return result.data
             
             # Fallback to regular query if RPC doesn't exist
+            logger.warning("RPC search_public_documents not available, using fallback method")
             result = self.supabase.table('document_chunks').select(
                 'id, document_id, chunk_content, chunk_index, page_number, '
-                'chapter_title, section_title, metadata, '
+                'chapter_title, section_title, metadata, embedding, '
                 'documents!inner(id, title, file_name, document_category, is_public, is_active)'
-            ).eq('documents.is_public', True).eq('documents.is_active', True).limit(limit).execute()
+            ).eq('documents.is_public', True).eq('documents.is_active', True).limit(limit * 3).execute()
             
-            # Add similarity scores (would be calculated by RPC in production)
+            # Calculate similarity scores manually if no RPC
             chunks = []
             for chunk in result.data or []:
-                chunks.append({
-                    'id': chunk['id'],
-                    'document_id': chunk['document_id'],
-                    'chunk_content': chunk['chunk_content'],
-                    'chunk_index': chunk['chunk_index'],
-                    'page_number': chunk['page_number'],
-                    'chapter_title': chunk['chapter_title'],
-                    'section_title': chunk['section_title'],
-                    'metadata': chunk['metadata'],
-                    'document_title': chunk['documents']['title'],
-                    'document_category': chunk['documents']['document_category'],
-                    'similarity': 0.8,  # Default similarity score
-                    'source_type': 'public'
-                })
+                # Calculate cosine similarity manually
+                chunk_embedding = chunk.get('embedding', [])
+                if chunk_embedding and len(chunk_embedding) == len(query_embedding):
+                    similarity = self._calculate_cosine_similarity(query_embedding, chunk_embedding)
+                else:
+                    similarity = 0.0
+                
+                # Only include chunks above similarity threshold
+                if similarity >= similarity_threshold:
+                    chunks.append({
+                        'id': chunk['id'],
+                        'document_id': chunk['document_id'],
+                        'chunk_content': chunk['chunk_content'],
+                        'chunk_index': chunk['chunk_index'],
+                        'page_number': chunk['page_number'],
+                        'chapter_title': chunk['chapter_title'],
+                        'section_title': chunk['section_title'],
+                        'metadata': chunk['metadata'],
+                        'document_title': chunk['documents']['title'],
+                        'document_category': chunk['documents']['document_category'],
+                        'similarity': similarity,  # Use calculated similarity
+                        'source_type': 'public'
+                    })
             
-            logger.info(f"Found {len(chunks)} public document chunks")
+            # Sort by similarity score (highest first)
+            chunks.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # Limit results
+            chunks = chunks[:limit]
+            
+            logger.info(f"Found {len(chunks)} public document chunks with similarity >= {similarity_threshold}")
             return chunks
             
         except Exception as e:
             logger.error(f"vector Error searching public documents: {str(e)}")
             return []
 
-    async def search_user_documents(self, query_embedding: List[float], user_id: str, limit: int = 5) -> List[Dict]:
+    async def search_user_documents(self, query_embedding: List[float], user_id: str, limit: int = 5, similarity_threshold: float = 0.7) -> List[Dict]:
         """Search user's private documents"""
         try:
             # Convert embedding to string format for pgvector
@@ -282,7 +326,7 @@ class VectorStore:
             result = self.supabase.rpc('search_user_documents', {
                 'query_embedding': embedding_str,
                 'user_id': user_id,
-                'match_threshold': 0.7,
+                'match_threshold': similarity_threshold,
                 'match_count': limit
             }).execute()
             
@@ -290,30 +334,46 @@ class VectorStore:
                 return result.data
             
             # Fallback to regular query if RPC doesn't exist
+            logger.warning("RPC search_user_documents not available, using fallback method")
             result = self.supabase.table('document_chunks').select(
                 'id, document_id, chunk_content, chunk_index, page_number, '
-                'chapter_title, section_title, metadata, '
+                'chapter_title, section_title, metadata, embedding, '
                 'documents!inner(id, title, file_name, user_id, is_public)'
-            ).eq('documents.user_id', user_id).eq('documents.is_public', False).limit(limit).execute()
+            ).eq('documents.user_id', user_id).eq('documents.is_public', False).limit(limit * 3).execute()
             
-            # Add similarity scores
+            # Calculate similarity scores manually if no RPC
             chunks = []
             for chunk in result.data or []:
-                chunks.append({
-                    'id': chunk['id'],
-                    'document_id': chunk['document_id'],
-                    'chunk_content': chunk['chunk_content'],
-                    'chunk_index': chunk['chunk_index'],
-                    'page_number': chunk['page_number'],
-                    'chapter_title': chunk['chapter_title'],
-                    'section_title': chunk['section_title'],
-                    'metadata': chunk['metadata'],
-                    'document_title': chunk['documents']['title'],
-                    'similarity': 0.8,  # Default similarity score
-                    'source_type': 'user'
-                })
+                # Calculate cosine similarity manually
+                chunk_embedding = chunk.get('embedding', [])
+                if chunk_embedding and len(chunk_embedding) == len(query_embedding):
+                    similarity = self._calculate_cosine_similarity(query_embedding, chunk_embedding)
+                else:
+                    similarity = 0.0
+                
+                # Only include chunks above similarity threshold
+                if similarity >= similarity_threshold:
+                    chunks.append({
+                        'id': chunk['id'],
+                        'document_id': chunk['document_id'],
+                        'chunk_content': chunk['chunk_content'],
+                        'chunk_index': chunk['chunk_index'],
+                        'page_number': chunk['page_number'],
+                        'chapter_title': chunk['chapter_title'],
+                        'section_title': chunk['section_title'],
+                        'metadata': chunk['metadata'],
+                        'document_title': chunk['documents']['title'],
+                        'similarity': similarity,  # Use calculated similarity
+                        'source_type': 'user'
+                    })
             
-            logger.info(f"Found {len(chunks)} user document chunks")
+            # Sort by similarity score (highest first)
+            chunks.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # Limit results
+            chunks = chunks[:limit]
+            
+            logger.info(f"Found {len(chunks)} user document chunks with similarity >= {similarity_threshold}")
             return chunks
             
         except Exception as e:

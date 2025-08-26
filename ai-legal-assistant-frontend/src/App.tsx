@@ -26,11 +26,11 @@ function App() {
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route element={<ProtectedRoute />}>
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/admin" element={<AdminDashboard />} />
               </Route>
               <Route path="/" element={<Navigate to="/login" />} />
               {/* Auth callback handler */}
               <Route path="/auth/callback" element={<AuthCallback />} />
-              <Route path="/admin" element={<AdminDashboard />} />
             </Routes>
           </AuthListener>
         </BrowserRouter>

@@ -1,6 +1,8 @@
 import logging
 from typing import List, Dict, Optional
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
+import asyncio
 from services.embedding_service import EmbeddingService
 from services.vector_store import VectorStore
 from utils.text_chunker import TextChunker
@@ -14,11 +16,63 @@ class RAGService:
     
     def __init__(self):
         """Initialize RAG service."""
+        from config.supabase_client import get_supabase_client
+        
+        # Primary Gemini setup
         genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model_primary = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = self.model_primary  # Keep for backward compatibility
+        
+        # Backup Gemini setup (if available)
+        self.model_backup = None
+        if hasattr(settings, 'gemini_api_key_backup') and getattr(settings, 'gemini_api_key_backup', None):
+            # We'll configure this when needed to avoid conflicts
+            self.backup_key = settings.gemini_api_key_backup
+        
         self.prompt_templates = PromptTemplates()
         self.embedding_service = EmbeddingService()
         self.vector_store = VectorStore()
+        
+    async def generate_with_fallback(self, prompt, generation_config=None):
+        """Generate content with automatic fallback to backup API key."""
+        try:
+            # Try primary API key first
+            response = await self.model_primary.generate_content_async(
+                prompt,
+                generation_config=generation_config
+            )
+            return response.text
+            
+        except ResourceExhausted as e:
+            logger.warning("Primary Gemini API rate limit exceeded, trying backup...")
+            
+            if hasattr(self, 'backup_key'):
+                try:
+                    # Configure backup API key
+                    genai.configure(api_key=self.backup_key)
+                    backup_model = genai.GenerativeModel('gemini-1.5-flash')
+                    
+                    response = await backup_model.generate_content_async(
+                        prompt,
+                        generation_config=generation_config
+                    )
+                    
+                    # Switch back to primary for next attempt
+                    genai.configure(api_key=settings.gemini_api_key)
+                    
+                    return response.text
+                    
+                except Exception as backup_error:
+                    logger.error(f"Backup API also failed: {backup_error}")
+                    # Switch back to primary
+                    genai.configure(api_key=settings.gemini_api_key)
+                    raise e
+            else:
+                raise e
+                
+        except Exception as e:
+            logger.error(f"Generation error: {str(e)}")
+            raise e
         
     async def process_document(self, user_id: str, document_data: Dict) -> str:
         """
@@ -187,22 +241,22 @@ class RAGService:
                 conversation_context = self._build_conversation_context(conversation_history)
             
             # Create prompt
-            prompt = self.prompt_templates.create_rag_prompt(
+            prompt = await self.prompt_templates.create_rag_prompt(
                 query=query,
                 context=context,
                 conversation_history=conversation_context
             )
             
             # Generate response
-            response = self.model.generate_content(
+            response_text = await self.generate_with_fallback(
                 prompt,
-                generation_config=genai.types.GenerationConfig(
+                genai.types.GenerationConfig(
                     temperature=settings.temperature,
                     max_output_tokens=2048,
                 )
             )
             
-            return response.text
+            return response_text
             
         except Exception as e:
             logger.error(f"Error generating with context: {str(e)}")
@@ -214,7 +268,7 @@ class RAGService:
         """Generate response using hybrid context with source attribution"""
         try:
             # Create hybrid prompt
-            prompt = self.prompt_templates.create_hybrid_rag_prompt(
+            prompt = await self.prompt_templates.create_hybrid_rag_prompt(
                 query=query,
                 context=context,
                 session_context=session_context,
@@ -222,15 +276,15 @@ class RAGService:
             )
             
             # Generate response
-            response = self.model.generate_content(
+            response_text = await self.generate_with_fallback(
                 prompt,
-                generation_config=genai.types.GenerationConfig(
+                genai.types.GenerationConfig(
                     temperature=0.7,  # Slightly higher for more natural flow
                     max_output_tokens=2048,
                 )
             )
             
-            return response.text
+            return response_text
             
         except Exception as e:
             logger.error(f"Error generating response with hybrid context: {str(e)}")
@@ -243,7 +297,7 @@ class RAGService:
         """Generate response using hybrid context with user type consideration"""
         try:
             # Create user-type-aware prompt
-            prompt = self.prompt_templates.create_hybrid_rag_prompt_with_user_type(
+            prompt = await self.prompt_templates.create_hybrid_rag_prompt_with_user_type(
                 query=query,
                 context=context,
                 user_type=user_type,
@@ -263,8 +317,8 @@ class RAGService:
                     max_output_tokens=2048,
                 )
             
-            response = self.model.generate_content(prompt, generation_config=generation_config)
-            return response.text
+            response_text = await self.generate_with_fallback(prompt, generation_config)
+            return response_text
             
         except Exception as e:
             logger.error(f"Error generating response with user type context: {str(e)}")
@@ -418,22 +472,21 @@ class RAGService:
             # Combine chunks for summary
             full_text = ' '.join([chunk['chunk_content'] for chunk in chunks[:5]])  # First 5 chunks
             
-            # Generate summary
-            prompt = f"""Provide a concise summary of this legal document:
-
-{full_text}
-
-Summary:"""
+            # Generate summary using dynamic prompt
+            from services.prompt_management_service import PromptManagementService
+            prompt_service = PromptManagementService()
             
-            response = self.model.generate_content(
+            prompt = await prompt_service.format_prompt('rag_document_summary', {'document_text': full_text})
+            
+            response_text = await self.generate_with_fallback(
                 prompt,
-                generation_config=genai.types.GenerationConfig(
+                genai.types.GenerationConfig(
                     temperature=0.3,
                     max_output_tokens=512,
                 )
             )
             
-            return {'summary': response.text}
+            return {'summary': response_text}
             
         except Exception as e:
             logger.error(f"Error generating document summary: {str(e)}")

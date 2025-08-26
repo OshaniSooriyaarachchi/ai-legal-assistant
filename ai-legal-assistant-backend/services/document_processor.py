@@ -23,6 +23,9 @@ class DocumentProcessor:
                 with open(temp_file_path, 'wb') as f:
                     f.write(content)
                 
+                # Calculate file size in bytes
+                file_size_bytes = len(content)
+                
                 # Extract text based on file type
                 file_extension = file.filename.split('.')[-1].lower()
                 
@@ -40,7 +43,8 @@ class DocumentProcessor:
                     "filename": file.filename,
                     "file_type": file_extension,
                     "text_content": text_content,
-                    "character_count": len(text_content)
+                    "character_count": len(text_content),
+                    "size_bytes": file_size_bytes
                 }
                 
                 return result
