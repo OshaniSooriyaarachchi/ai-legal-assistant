@@ -563,7 +563,7 @@ async def send_chat_message(
         processing_time = int((time.time() - start_time) * 1000)
         result['processing_time_ms'] = processing_time
         
-        # Store complete conversation in single record
+        # Store complete conversation in single record with admin data
         supabase = get_supabase_client()
         
         supabase.table('query_history').insert({
@@ -571,6 +571,8 @@ async def send_chat_message(
             'session_id': session_id,
             'query_text': request.query,
             'response_text': result['response'],
+            'gemini_prompt': result.get('gemini_prompt'),        # NEW: For admin viewing
+            'gemini_raw_response': result.get('gemini_raw_response'), # NEW: For admin viewing
             'message_type': 'conversation',
             'processing_time_ms': processing_time
         }).execute()
@@ -740,7 +742,9 @@ async def upload_document_to_chat(
             'session_id': session_id,
             'query_text': f"Uploaded document: {file.filename}",
             'message_type': 'document_upload',
-            'document_ids': [document_id]
+            'document_ids': [document_id],
+            'gemini_prompt': None,  # No AI interaction for document uploads
+            'gemini_raw_response': None  # No AI interaction for document uploads
         }).execute()
         
         return {
@@ -1161,13 +1165,34 @@ async def get_all_user_chats(current_user = Depends(get_current_user)):
         
         chats = []
         for session in (result.data or []):
+            # Ensure timestamps are properly formatted with timezone info
+            created_at = session.get('created_at')
+            updated_at = session.get('updated_at')
+            
+            # Handle timezone conversion for Sri Lankan time
+            if created_at:
+                # If no timezone info, assume UTC and add 'Z'
+                if not created_at.endswith('Z') and '+' not in created_at and 'T' in created_at:
+                    created_at = created_at + 'Z'
+                elif 'T' not in created_at:
+                    # If it's just a date, add time and timezone
+                    created_at = created_at + 'T00:00:00Z'
+            
+            if updated_at:
+                # If no timezone info, assume UTC and add 'Z'
+                if not updated_at.endswith('Z') and '+' not in updated_at and 'T' in updated_at:
+                    updated_at = updated_at + 'Z'
+                elif 'T' not in updated_at:
+                    # If it's just a date, add time and timezone
+                    updated_at = updated_at + 'T00:00:00Z'
+            
             chats.append({
                 'session_id': session['id'],
                 'title': session['title'],
                 'user_id': session['user_id'],
                 'user_email': f"user-{session['user_id'][:8]}",  # Simple user identifier
-                'created_at': session['created_at'],
-                'updated_at': session['updated_at']
+                'created_at': created_at,
+                'updated_at': updated_at
             })
         
         return {
@@ -1254,10 +1279,24 @@ async def get_chat_history_admin(
         if session_info.get('profiles'):
             user_email = session_info['profiles'].get('email', 'Unknown')
         
-        # Get chat history
+        # Get chat history with admin fields
         history_result = supabase.table('query_history').select(
-            'id, query_text, response_text, message_type, created_at, document_ids'
+            'id, query_text, response_text, gemini_prompt, gemini_raw_response, '
+            'message_type, created_at, document_ids'
         ).eq('session_id', session_id).order('created_at', desc=False).execute()
+        
+        # Process history timestamps
+        processed_history = []
+        for item in (history_result.data or []):
+            created_at = item.get('created_at')
+            if created_at:
+                # Ensure proper timezone format
+                if not created_at.endswith('Z') and '+' not in created_at and 'T' in created_at:
+                    created_at = created_at + 'Z'
+                elif 'T' not in created_at:
+                    created_at = created_at + 'T00:00:00Z'
+                item['created_at'] = created_at
+            processed_history.append(item)
         
         return {
             "status": "success",
@@ -1268,8 +1307,8 @@ async def get_chat_history_admin(
                 "user_email": user_email,
                 "created_at": session_info['created_at']
             },
-            "history": history_result.data or [],
-            "total": len(history_result.data) if history_result.data else 0
+            "history": processed_history,
+            "total": len(processed_history)
         }
         
     except HTTPException:

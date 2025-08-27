@@ -670,18 +670,30 @@ export class ApiService {
   }
 
   static async testPromptTemplate(templateData: any) {
-    const headers = await this.getAuthHeaders();
-    const response = await fetch(`${this.baseURL}/api/admin/prompts/test`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(templateData)
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+    // Format the template locally instead of calling the backend
+    // This avoids the 422 error from mismatched request structure
+    try {
+      let formattedContent = templateData.template_content || '';
+      
+      // Replace placeholders with actual values
+      if (templateData.variables && typeof templateData.variables === 'object') {
+        Object.keys(templateData.variables).forEach(key => {
+          const placeholder = `{${key}}`;
+          const value = templateData.variables[key] || '';
+          // Escape special regex characters in placeholder for safe replacement
+          const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          formattedContent = formattedContent.replace(new RegExp(escapedPlaceholder, 'g'), value);
+        });
+      }
+      
+      return {
+        status: "success",
+        formatted_prompt: formattedContent,
+        variables_used: templateData.variables || {}
+      };
+    } catch (error) {
+      throw new Error(`Template formatting error: ${error}`);
     }
-
-    return response.json();
   }
 
   static async getPromptVersionHistory(templateId: string) {

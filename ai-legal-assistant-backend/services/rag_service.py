@@ -210,7 +210,8 @@ class RAGService:
             session_context = search_results.get('session_context', '')
             
             # Generate response using Gemini with hybrid context and user type
-            response = await self._generate_with_hybrid_context_and_user_type(
+            # Modified to return both prompt and response for admin viewing
+            generation_result = await self._generate_with_hybrid_context_and_user_type_detailed(
                 query=query,
                 context=context,
                 session_context=session_context,
@@ -218,9 +219,11 @@ class RAGService:
                 user_type=user_type
             )
             
-            # Prepare response with source attribution
+            # Prepare response with source attribution and admin data
             return {
-                'response': response,
+                'response': generation_result['response'],
+                'gemini_prompt': generation_result.get('prompt'),           # NEW: For admin viewing
+                'gemini_raw_response': generation_result.get('raw_response'), # NEW: For admin viewing
                 'sources': relevant_chunks,
                 'source_breakdown': search_results.get('source_breakdown', {}),
                 'session_context_used': bool(session_context),
@@ -319,6 +322,46 @@ class RAGService:
             
             response_text = await self.generate_with_fallback(prompt, generation_config)
             return response_text
+            
+        except Exception as e:
+            logger.error(f"Error generating response with user type context: {str(e)}")
+            raise Exception(f"Failed to generate response: {str(e)}")
+
+    async def _generate_with_hybrid_context_and_user_type_detailed(self, query: str, context: str, 
+                                                                session_context: str = "",
+                                                                conversation_history: str = "",
+                                                                user_type: str = "normal") -> Dict:
+        """Generate response and return detailed data including prompt and raw response for admin viewing"""
+        try:
+            # Create user-type-aware prompt
+            prompt = await self.prompt_templates.create_hybrid_rag_prompt_with_user_type(
+                query=query,
+                context=context,
+                user_type=user_type,
+                session_context=session_context,
+                conversation_history=conversation_history
+            )
+            
+            # Adjust generation config based on user type
+            if user_type == "lawyer":
+                generation_config = genai.types.GenerationConfig(
+                    temperature=0.3,  # Lower temperature for more precise legal language
+                    max_output_tokens=3000,  # Allow more tokens for detailed analysis
+                )
+            else:
+                generation_config = genai.types.GenerationConfig(
+                    temperature=0.7,  # Higher temperature for more natural explanations
+                    max_output_tokens=2048,
+                )
+            
+            # Generate response and capture raw response
+            raw_response = await self.generate_with_fallback(prompt, generation_config)
+            
+            return {
+                'prompt': prompt,
+                'raw_response': raw_response,
+                'response': raw_response  # For now, they're the same
+            }
             
         except Exception as e:
             logger.error(f"Error generating response with user type context: {str(e)}")

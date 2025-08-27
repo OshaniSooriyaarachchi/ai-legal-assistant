@@ -155,7 +155,7 @@ export const ChatSessionList: React.FC<ChatSessionListProps> = ({ onSessionSelec
   return (
     <div className="w-80 bg-white border-r border-gray-300 flex flex-col h-full">
       {/* Header with New Chat button */}
-      <div className="p-4 border-b border-gray-200 bg-gray-50">
+      <div className="p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
         <button
           onClick={handleNewChat}
           disabled={loading}
@@ -243,7 +243,7 @@ export const ChatSessionList: React.FC<ChatSessionListProps> = ({ onSessionSelec
       </div>
       
       {/* Footer */}
-      <div className="p-3 border-t border-gray-200 bg-gray-50">
+      <div className="p-3 border-t border-gray-200 bg-gray-50 flex-shrink-0">
         <div className="text-xs text-gray-500 text-center">
           {sessions.length} chat{sessions.length !== 1 ? 's' : ''} total
         </div>

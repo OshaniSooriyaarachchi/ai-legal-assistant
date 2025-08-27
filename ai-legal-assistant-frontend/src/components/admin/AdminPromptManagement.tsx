@@ -96,14 +96,30 @@ const AdminPromptManagement: React.FC = () => {
     setIsCreating(true);
   };
 
-  const handleSaveTemplate = () => {
-    setSelectedTemplate(null);
-    setIsCreating(false);
-    // Trigger refresh of the template list
-    setRefreshTrigger(prev => prev + 1);
-  };
-
-  const handleCancel = () => {
+  const handleSaveTemplate = async (templateData: any) => {
+    try {
+      setIsLoadingData(true);
+      
+      if (selectedTemplate) {
+        // Update existing template
+        await ApiService.updatePromptTemplate(selectedTemplate.id!, templateData);
+        console.log('Template updated successfully');
+      } else {
+        // Create new template
+        await ApiService.createPromptTemplate(templateData);
+        console.log('Template created successfully');
+      }
+      
+      setSelectedTemplate(null);
+      setIsCreating(false);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error('Error saving template:', error);
+      alert('Failed to save template. Please check the console for details.');
+    } finally {
+      setIsLoadingData(false);
+    }
+  };  const handleCancel = () => {
     setSelectedTemplate(null);
     setIsCreating(false);
   };

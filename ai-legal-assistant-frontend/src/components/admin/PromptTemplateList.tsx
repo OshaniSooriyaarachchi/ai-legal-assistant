@@ -83,7 +83,7 @@ const PromptTemplateList: React.FC<PromptTemplateListProps> = ({
     try {
       setLoading(true);
       const response = await ApiService.getAllPromptTemplates();
-      setTemplates(response.data || []);
+      setTemplates(response.templates || []);
     } catch (error) {
       console.error('Error loading templates:', error);
       alert('Failed to load prompt templates');
@@ -95,7 +95,7 @@ const PromptTemplateList: React.FC<PromptTemplateListProps> = ({
   const loadCategories = async () => {
     try {
       const response = await ApiService.getPromptCategories();
-      setCategories(response.data || []);
+      setCategories(response.categories || []);
     } catch (error) {
       console.error('Error loading categories:', error);
     }

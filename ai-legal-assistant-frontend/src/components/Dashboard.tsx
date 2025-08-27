@@ -37,8 +37,8 @@ const Dashboard: React.FC = () => {
   console.log('Current isAdmin state:', isAdmin);
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      <nav className="bg-white shadow-sm">
+    <div className="h-screen bg-gray-100 flex flex-col overflow-hidden">
+      <nav className="bg-white shadow-sm flex-shrink-0">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center h-16">
           <div className="flex items-center pl-4">
@@ -68,15 +68,13 @@ const Dashboard: React.FC = () => {
 
 
       {/* Main Content Area with Sidebar */}
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         {/* Chat Sessions Sidebar */}
         <ChatSessionList />
         
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1">
-            <ChatInterface />
-          </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <ChatInterface />
         </div>
       </div>
     </div>

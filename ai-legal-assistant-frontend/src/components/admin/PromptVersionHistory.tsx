@@ -73,7 +73,7 @@ const PromptVersionHistory: React.FC<PromptVersionHistoryProps> = ({
     try {
       setLoading(true);
       const response = await ApiService.getPromptVersionHistory(templateId);
-      setVersions(response.data || []);
+      setVersions(response.versions || []);
     } catch (error) {
       console.error('Error loading version history:', error);
       alert('Failed to load version history');

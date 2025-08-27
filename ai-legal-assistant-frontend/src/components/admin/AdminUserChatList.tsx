@@ -14,10 +14,49 @@ interface ChatHistory {
   id: string;
   query_text: string;
   response_text: string;
+  gemini_prompt?: string;         // NEW: For admin viewing
+  gemini_raw_response?: string;   // NEW: For admin viewing
   message_type: string;
   created_at: string;
   document_ids?: string[];
 }
+
+interface AdminPromptSectionProps {
+  title: string;
+  content: string;
+  bgColor: string;
+  textColor: string;
+  headerColor: string;
+}
+
+const AdminPromptSection: React.FC<AdminPromptSectionProps> = ({ 
+  title, content, bgColor, textColor, headerColor 
+}) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className={`${bgColor} p-3 rounded-lg`}>
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className={`${headerColor} font-medium text-sm mb-1 flex items-center w-full text-left hover:opacity-80`}
+      >
+        <span className="mr-2">{isExpanded ? '▼' : '▶'}</span>
+        {title}
+        <span className="text-xs ml-2 opacity-70">
+          ({content.length} characters)
+        </span>
+      </button>
+      
+      {isExpanded && (
+        <div className={`${textColor} mt-2`}>
+          <pre className="whitespace-pre-wrap text-sm max-h-96 overflow-y-auto bg-white bg-opacity-50 p-2 rounded border">
+            {content}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const AdminUserChatList: React.FC = () => {
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -67,7 +106,77 @@ const AdminUserChatList: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    if (!dateString) return 'Unknown';
+    
+    try {
+      let date;
+      
+      // Handle different date formats and ensure proper parsing
+      if (dateString.includes('T')) {
+        // ISO format - ensure it has timezone info
+        if (!dateString.endsWith('Z') && !dateString.includes('+')) {
+          // Assume UTC if no timezone specified
+          date = new Date(dateString + 'Z');
+        } else {
+          date = new Date(dateString);
+        }
+      } else {
+        // If no time part, assume it's a date only and add UTC time
+        date = new Date(dateString + 'T00:00:00Z');
+      }
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        // Try parsing without timezone modifications
+        date = new Date(dateString);
+        if (isNaN(date.getTime())) {
+          return 'Invalid Date';
+        }
+      }
+      
+      // Get current time in Sri Lankan timezone for comparison
+      const now = new Date();
+      const sriLankanNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+      const sriLankanDate = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+      
+      const diffInHours = (sriLankanNow.getTime() - sriLankanDate.getTime()) / (1000 * 60 * 60);
+      
+      // Show relative time for recent items
+      if (Math.abs(diffInHours) < 24) {
+        const timeString = sriLankanDate.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+        
+        if (diffInHours >= 0 && diffInHours < 24) {
+          return `${timeString} (today)`;
+        } else if (diffInHours < 0 && diffInHours > -24) {
+          return `${timeString} (today)`;
+        }
+      } else if (Math.abs(diffInHours) < 48) {
+        const timeString = sriLankanDate.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+        return `${timeString} (yesterday)`;
+      }
+      
+      // Show full date for older items
+      return sriLankanDate.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      
+    } catch (error) {
+      console.error('Date formatting error:', error, 'for date:', dateString);
+      return 'Invalid Date';
+    }
   };
 
   const formatMessage = (text: string, maxLength: number = 100) => {
@@ -207,9 +316,9 @@ const AdminUserChatList: React.FC = () => {
                 {chatHistory.length === 0 ? (
                   <p className="text-gray-500 text-center py-4">No messages in this chat</p>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     {chatHistory.map((message) => (
-                      <div key={message.id} className="border-b border-gray-200 pb-4">
+                      <div key={message.id} className="border-b border-gray-200 pb-6">
                         {message.message_type === 'document_upload' ? (
                           <div className="bg-green-50 p-3 rounded-lg">
                             <div className="flex items-center text-green-800">
@@ -223,25 +332,50 @@ const AdminUserChatList: React.FC = () => {
                             </p>
                           </div>
                         ) : (
-                          <>
-                            <div className="bg-blue-50 p-3 rounded-lg mb-2">
-                              <p className="text-blue-800 font-medium">User:</p>
+                          <div className="space-y-3">
+                            {/* 1. User Message */}
+                            <div className="bg-blue-50 p-3 rounded-lg">
+                              <p className="text-blue-800 font-medium text-sm mb-1">👤 User Message:</p>
                               <p className="text-blue-700">{message.query_text}</p>
                             </div>
                             
+                            {/* 2. Prompt Sent to Gemini (Expandable) */}
+                            {message.gemini_prompt && (
+                              <AdminPromptSection 
+                                title="🤖 Prompt Sent to Gemini API"
+                                content={message.gemini_prompt}
+                                bgColor="bg-purple-50"
+                                textColor="text-purple-700"
+                                headerColor="text-purple-800"
+                              />
+                            )}
+                            
+                            {/* 3. Raw Gemini Response (Expandable) */}
+                            {message.gemini_raw_response && (
+                              <AdminPromptSection 
+                                title="⚡ Raw Gemini API Response"
+                                content={message.gemini_raw_response}
+                                bgColor="bg-orange-50"
+                                textColor="text-orange-700"
+                                headerColor="text-orange-800"
+                              />
+                            )}
+                            
+                            {/* 4. Final Assistant Response (Expandable) */}
                             {message.response_text && (
-                              <div className="bg-gray-50 p-3 rounded-lg">
-                                <p className="text-gray-800 font-medium">Assistant:</p>
-                                <p className="text-gray-700 whitespace-pre-wrap">
-                                  {formatMessage(message.response_text, 300)}
-                                </p>
-                              </div>
+                              <AdminPromptSection 
+                                title="✅ Final Assistant Response"
+                                content={message.response_text}
+                                bgColor="bg-gray-50"
+                                textColor="text-gray-700"
+                                headerColor="text-gray-800"
+                              />
                             )}
                             
                             <p className="text-xs text-gray-500 mt-2">
                               {formatDate(message.created_at)}
                             </p>
-                          </>
+                          </div>
                         )}
                       </div>
                     ))}

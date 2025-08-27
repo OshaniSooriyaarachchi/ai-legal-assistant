@@ -143,7 +143,7 @@ const PromptTemplateEditor: React.FC<PromptTemplateEditorProps> = ({
       };
       
       const response = await ApiService.testPromptTemplate(testData);
-      setTestResult(response.data?.output || 'Test completed successfully');
+      setTestResult(response.formatted_prompt || 'Test completed successfully');
     } catch (error) {
       console.error('Test failed:', error);
       setTestResult('Test failed. Please check your template and try again.');
