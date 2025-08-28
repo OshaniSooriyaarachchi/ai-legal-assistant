@@ -4,8 +4,11 @@ import { supabase } from '../../lib/supabase';
 const DocumentUploadAdmin: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [category, setCategory] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [description, setDescription] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [errors, setErrors] = useState<{[key: string]: string}>({});
 
   const categories = [
     { value: 'traffic_law', label: 'Traffic Law' },
@@ -40,21 +43,51 @@ const DocumentUploadAdmin: React.FC = () => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      
+      // Auto-populate display name with filename if empty
+      if (!displayName) {
+        setDisplayName(selectedFile.name.replace(/\.[^/.]+$/, ''));
+      }
     }
   };
 
+  const validateForm = () => {
+    const newErrors: {[key: string]: string} = {};
+    
+    if (!file) {
+      newErrors.file = 'Please select a file';
+    }
+    
+    if (!category) {
+      newErrors.category = 'Please select a category';
+    }
+    
+    if (!displayName.trim()) {
+      newErrors.displayName = 'Document name is required';
+    }
+    
+    if (!description.trim()) {
+      newErrors.description = 'Document description is required';
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
   const handleUpload = async () => {
-  if (!file || !category) {
-    alert('Please select a file and category');
-    return;
-  }
+    if (!validateForm()) {
+      return;
+    }
 
   setUploading(true);
   try {
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', file!);
     formData.append('category', category);
+    formData.append('display_name', displayName.trim());
+    formData.append('description', description.trim());
 
     // Get auth headers
     const { data: { session } } = await supabase.auth.getSession();
@@ -81,6 +114,9 @@ const DocumentUploadAdmin: React.FC = () => {
       alert('Document uploaded successfully to knowledge base!');
       setFile(null);
       setCategory('');
+      setDisplayName('');
+      setDescription('');
+      setErrors({});
       // Reset file input
       const fileInput = document.getElementById('file-input') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
@@ -112,7 +148,9 @@ const DocumentUploadAdmin: React.FC = () => {
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+          className={`block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+            errors.category ? 'border-red-500' : 'border-gray-300'
+          }`}
           required
         >
           <option value="">Select a category</option>
@@ -122,6 +160,52 @@ const DocumentUploadAdmin: React.FC = () => {
             </option>
           ))}
         </select>
+        {errors.category && (
+          <p className="mt-1 text-sm text-red-600">{errors.category}</p>
+        )}
+      </div>
+
+      {/* Document Name Field */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Document Name *
+        </label>
+        <input
+          type="text"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+            errors.displayName ? 'border-red-500' : 'border-gray-300'
+          }`}
+          placeholder="Enter a name for this document"
+          disabled={uploading}
+        />
+        {errors.displayName && (
+          <p className="mt-1 text-sm text-red-600">{errors.displayName}</p>
+        )}
+        <p className="mt-1 text-xs text-gray-500">
+          This name will be used when referencing the document in responses
+        </p>
+      </div>
+
+      {/* Description Field */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Document Description *
+        </label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={3}
+          className={`w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+            errors.description ? 'border-red-500' : 'border-gray-300'
+          }`}
+          placeholder="Describe what this document contains"
+          disabled={uploading}
+        />
+        {errors.description && (
+          <p className="mt-1 text-sm text-red-600">{errors.description}</p>
+        )}
       </div>
 
       {/* File Upload */}
@@ -131,7 +215,8 @@ const DocumentUploadAdmin: React.FC = () => {
         </label>
         <div
           className={`relative border-2 border-dashed rounded-lg p-6 text-center ${
-            dragActive ? 'border-blue-400 bg-blue-50' : 'border-gray-300'
+            dragActive ? 'border-blue-400 bg-blue-50' : 
+            errors.file ? 'border-red-400' : 'border-gray-300'
           }`}
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -166,15 +251,18 @@ const DocumentUploadAdmin: React.FC = () => {
             )}
           </div>
         </div>
+        {errors.file && (
+          <p className="mt-1 text-sm text-red-600">{errors.file}</p>
+        )}
       </div>
 
       {/* Upload Button */}
       <div>
         <button
           onClick={handleUpload}
-          disabled={!file || !category || uploading}
+          disabled={uploading}
           className={`w-full py-2 px-4 rounded-md font-medium ${
-            !file || !category || uploading
+            uploading
               ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-700'
           }`}

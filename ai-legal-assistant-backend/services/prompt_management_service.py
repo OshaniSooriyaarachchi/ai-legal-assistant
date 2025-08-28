@@ -167,6 +167,30 @@ class PromptManagementService:
             logger.error(f"Error deleting prompt template: {str(e)}")
             raise Exception(f"Failed to delete prompt template: {str(e)}")
     
+    async def restore_prompt_template(self, admin_user_id: str, template_id: str) -> bool:
+        """Restore a soft-deleted prompt template (set is_active=True)"""
+        try:
+            # Verify admin privileges
+            if not await self.verify_admin_role(admin_user_id):
+                raise Exception("Admin privileges required")
+            
+            # Restore by setting is_active=True
+            result = self.supabase.table('prompt_templates').update({
+                'is_active': True,
+                'updated_by': admin_user_id,
+                'updated_at': datetime.now().isoformat()
+            }).eq('id', template_id).execute()
+            
+            if not result.data:
+                raise Exception("Prompt template not found")
+            
+            logger.info(f"Restored prompt template {template_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error restoring prompt template: {str(e)}")
+            raise Exception(f"Failed to restore prompt template: {str(e)}")
+    
     async def get_prompt_template_versions(self, admin_user_id: str, template_id: str) -> List[Dict]:
         """Get version history for a prompt template"""
         try:

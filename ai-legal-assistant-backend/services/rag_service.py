@@ -375,9 +375,10 @@ class RAGService:
         context_parts = []
         for i, chunk in enumerate(relevant_chunks, 1):
             similarity_score = chunk.get('similarity_score', 0)
-            filename = chunk.get('document_title', chunk.get('filename', 'Unknown'))
+            # Use display_name if available, fallback to document_title, then filename
+            display_name = chunk.get('display_name') or chunk.get('document_title') or chunk.get('filename', 'Unknown')
             context_parts.append(
-                f"[Source {i}: {filename} (Relevance: {similarity_score:.2f})]\n"
+                f"[Source {i}: {display_name} (Relevance: {similarity_score:.2f})]\n"
                 f"{chunk.get('chunk_content', chunk.get('chunk_text', ''))}\n"
             )
         
@@ -399,7 +400,8 @@ class RAGService:
         if public_chunks:
             context_parts.append("=== LEGAL KNOWLEDGE BASE ===")
             for chunk in public_chunks:
-                doc_title = chunk.get('document_title', 'Unknown Document')
+                # Use display_name if available, fallback to document_title
+                doc_title = chunk.get('display_name') or chunk.get('document_title', 'Unknown Document')
                 category = chunk.get('document_category', 'General')
                 content = chunk.get('chunk_content', '')
                 
@@ -411,7 +413,8 @@ class RAGService:
         if user_chunks:
             context_parts.append("=== YOUR DOCUMENTS ===")
             for chunk in user_chunks:
-                doc_title = chunk.get('document_title', 'Unknown Document')
+                # Use display_name if available, fallback to document_title
+                doc_title = chunk.get('display_name') or chunk.get('document_title', 'Unknown Document')
                 content = chunk.get('chunk_content', '')
                 
                 context_parts.append(f"Source: {doc_title}")
@@ -422,7 +425,8 @@ class RAGService:
         if session_chunks:
             context_parts.append("=== CURRENT SESSION DOCUMENTS ===")
             for chunk in session_chunks:
-                doc_title = chunk.get('document_title', 'Unknown Document')
+                # Use display_name if available, fallback to document_title
+                doc_title = chunk.get('display_name') or chunk.get('document_title', 'Unknown Document')
                 content = chunk.get('chunk_content', '')
                 
                 context_parts.append(f"Source: {doc_title}")
@@ -451,15 +455,16 @@ class RAGService:
         seen_files = set()
         
         for chunk in relevant_chunks:
-            filename = chunk.get('document_title', chunk.get('filename', 'Unknown'))
-            if filename not in seen_files:
+            # Use display_name if available, fallback to document_title, then filename
+            display_name = chunk.get('display_name') or chunk.get('document_title') or chunk.get('filename', 'Unknown')
+            if display_name not in seen_files:
                 sources.append({
-                    'filename': filename,
+                    'filename': display_name,  # Keep field name for backward compatibility
                     'file_type': chunk.get('file_type', 'unknown'),
                     'similarity_score': chunk.get('similarity_score', 0),
                     'chunk_preview': chunk.get('chunk_content', chunk.get('chunk_text', ''))[:200] + "..."
                 })
-                seen_files.add(filename)
+                seen_files.add(display_name)
         
         return sources
 
@@ -469,8 +474,9 @@ class RAGService:
         
         # Format public sources
         for result in search_results.get('public_results', []):
+            display_name = result.get('display_name') or result.get('document_title', 'Unknown')
             sources.append({
-                'filename': result.get('document_title', 'Unknown'),
+                'filename': display_name,  # Keep field name for backward compatibility
                 'source_type': 'public',
                 'category': result.get('document_category', 'General'),
                 'similarity_score': result.get('similarity_score', 0),
@@ -479,8 +485,9 @@ class RAGService:
         
         # Format user sources
         for result in search_results.get('user_results', []):
+            display_name = result.get('display_name') or result.get('document_title', 'Unknown')
             sources.append({
-                'filename': result.get('document_title', 'Unknown'),
+                'filename': display_name,  # Keep field name for backward compatibility
                 'source_type': 'user',
                 'similarity_score': result.get('similarity_score', 0),
                 'chunk_preview': result.get('chunk_content', '')[:200] + "..."
@@ -488,8 +495,9 @@ class RAGService:
         
         # Format session sources
         for result in search_results.get('session_results', []):
+            display_name = result.get('display_name') or result.get('document_title', 'Unknown')
             sources.append({
-                'filename': result.get('document_title', 'Unknown'),
+                'filename': display_name,  # Keep field name for backward compatibility
                 'source_type': 'session',
                 'similarity_score': result.get('similarity_score', 0),
                 'chunk_preview': result.get('chunk_content', '')[:200] + "..."

@@ -290,10 +290,18 @@ async def health_check():
 @app.post("/api/documents/upload", response_model=dict)
 async def upload_document(
     file: UploadFile = File(...),
+    display_name: str = Form(...),
+    description: str = Form(...),
     current_user = Depends(get_current_user)
 ):
     """Upload and process a user document."""
     try:
+        # Validate required fields
+        if not display_name.strip():
+            raise HTTPException(status_code=400, detail="Document name is required")
+        if not description.strip():
+            raise HTTPException(status_code=400, detail="Document description is required")
+            
         # Validate file type
         if not file.filename.lower().endswith(('.pdf', '.docx', '.txt')):
             raise HTTPException(
@@ -302,12 +310,16 @@ async def upload_document(
             )
         
         # Process document through full pipeline
-        result = await document_processor.process_document_full_pipeline(file, current_user.id)
+        result = await document_processor.process_document_full_pipeline(
+            file, current_user.id, display_name.strip(), description.strip()
+        )
         
         return {
             "status": "success",
             "message": "Document processed successfully",
             "document_id": result["document_id"],
+            "display_name": result.get("display_name", display_name),
+            "description": result.get("description", description),
             "filename": result["filename"],
             "file_type": result["file_type"],
             "character_count": result["character_count"],
@@ -329,6 +341,8 @@ async def upload_document(
 async def admin_upload_document(
     file: UploadFile = File(...),
     category: str = Form(...),
+    display_name: str = Form(...),
+    description: str = Form(...),
     current_user = Depends(get_current_user)
 ):
     """Admin upload to common knowledge base."""
@@ -337,6 +351,12 @@ async def admin_upload_document(
         is_admin = await verify_admin_role(current_user.id)
         if not is_admin:
             raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        # Validate required fields
+        if not display_name.strip():
+            raise HTTPException(status_code=400, detail="Document name is required")
+        if not description.strip():
+            raise HTTPException(status_code=400, detail="Document description is required")
         
         # Validate file type
         if not file.filename.lower().endswith(('.pdf', '.docx', '.txt')):
@@ -348,12 +368,21 @@ async def admin_upload_document(
         # Process document and store as public
         document_data = await document_processor.process_upload(file)
         
+        # Add custom fields to document data
+        document_data['display_name'] = display_name.strip()
+        document_data['description'] = description.strip()
+        
         # Chunk and generate embeddings
         from utils.text_chunker import TextChunker
         chunker = TextChunker()
         chunks = chunker.chunk_text(
             document_data['text_content'],
-            document_metadata={'filename': document_data['filename'], 'file_type': document_data['file_type']}
+            document_metadata={
+                'filename': document_data['filename'], 
+                'file_type': document_data['file_type'],
+                'display_name': display_name.strip(),
+                'description': description.strip()
+            }
         )
         
         chunks_with_embeddings = await embedding_service.generate_chunk_embeddings(chunks)
@@ -367,6 +396,8 @@ async def admin_upload_document(
             "status": "success",
             "message": "Admin document uploaded to knowledge base",
             "document_id": document_id,
+            "display_name": display_name.strip(),
+            "description": description.strip(),
             "filename": document_data["filename"],
             "category": category,
             "total_chunks": len(chunks),
@@ -706,10 +737,18 @@ async def update_session_title(
 async def upload_document_to_chat(
     session_id: str,
     file: UploadFile = File(...),
+    display_name: str = Form(...),
+    description: str = Form(...),
     current_user = Depends(get_current_user)
 ):
     """Upload document to specific chat session."""
     try:
+        # Validate required fields
+        if not display_name.strip():
+            raise HTTPException(status_code=400, detail="Document name is required")
+        if not description.strip():
+            raise HTTPException(status_code=400, detail="Document description is required")
+            
         # Validate file type
         if not file.filename.lower().endswith(('.pdf', '.docx', '.txt')):
             raise HTTPException(
@@ -720,12 +759,21 @@ async def upload_document_to_chat(
         # Process document and link to chat session
         document_data = await document_processor.process_upload(file)
         
+        # Add custom fields to document data
+        document_data['display_name'] = display_name.strip()
+        document_data['description'] = description.strip()
+        
         # Chunk and generate embeddings
         from utils.text_chunker import TextChunker
         chunker = TextChunker()
         chunks = chunker.chunk_text(
             document_data['text_content'],
-            document_metadata={'filename': document_data['filename'], 'file_type': document_data['file_type']}
+            document_metadata={
+                'filename': document_data['filename'], 
+                'file_type': document_data['file_type'],
+                'display_name': display_name.strip(),
+                'description': description.strip()
+            }
         )
         
         chunks_with_embeddings = await embedding_service.generate_chunk_embeddings(chunks)
@@ -740,7 +788,7 @@ async def upload_document_to_chat(
         supabase.table('query_history').insert({
             'user_id': current_user.id,
             'session_id': session_id,
-            'query_text': f"Uploaded document: {file.filename}",
+            'query_text': f"Uploaded document: {display_name.strip()}",
             'message_type': 'document_upload',
             'document_ids': [document_id],
             'gemini_prompt': None,  # No AI interaction for document uploads
@@ -751,6 +799,8 @@ async def upload_document_to_chat(
             "status": "success",
             "message": "Document uploaded to chat session",
             "document_id": document_id,
+            "display_name": display_name.strip(),
+            "description": description.strip(),
             "filename": document_data["filename"],
             "session_id": session_id,
             "total_chunks": len(chunks)
@@ -1904,6 +1954,37 @@ async def delete_prompt_template(
     except Exception as e:
         logger.error(f"Error deleting prompt template: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete prompt template: {str(e)}")
+
+@app.post("/api/admin/prompts/{template_id}/restore")
+async def restore_prompt_template(
+    template_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Restore a soft-deleted prompt template"""
+    try:
+        # Verify admin role
+        is_admin = await verify_admin_role(current_user.id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        
+        success = await prompt_management_service.restore_prompt_template(
+            current_user.id, 
+            template_id
+        )
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Prompt template restored successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Prompt template not found")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error restoring prompt template: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to restore prompt template: {str(e)}")
 
 @app.post("/api/admin/prompts/{template_id}/duplicate")
 async def duplicate_prompt_template(

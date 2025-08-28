@@ -122,14 +122,16 @@ export const sendMessage = createAsyncThunk(
 
 export const uploadDocument = createAsyncThunk(
   'chat/uploadDocument',
-  async (file: File, { getState }) => {
+  async (uploadData: { file: File; displayName: string; description: string }, { getState }) => {
     const state = getState() as { chat: ChatState };
     const sessionId = state.chat.currentSessionId;
     
-    const result = await ApiService.uploadDocument(file, sessionId || undefined);
+    const result = await ApiService.uploadDocument(uploadData.file, uploadData.displayName, uploadData.description, sessionId || undefined);
     return {
       id: result.document_id,
-      fileName: file.name,
+      fileName: uploadData.file.name,
+      displayName: uploadData.displayName,
+      description: uploadData.description,
       uploadedAt: new Date().toISOString(),
     };
   }

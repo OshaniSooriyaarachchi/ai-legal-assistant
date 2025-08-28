@@ -174,9 +174,11 @@ export class ApiService {
   }
 
   // Document endpoints
-  static async uploadDocument(file: File, sessionId?: string) {
+  static async uploadDocument(file: File, displayName: string, description: string, sessionId?: string) {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('display_name', displayName);
+    formData.append('description', description);
 
     const url = sessionId 
       ? `${this.baseURL}/api/chat/sessions/${sessionId}/upload`
@@ -631,6 +633,20 @@ export class ApiService {
     const headers = await this.getAuthHeaders();
     const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}`, {
       method: 'DELETE',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  static async restorePromptTemplate(templateId: string) {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${this.baseURL}/api/admin/prompts/${templateId}/restore`, {
+      method: 'POST',
       headers,
     });
 

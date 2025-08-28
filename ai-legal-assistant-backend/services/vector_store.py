@@ -63,7 +63,9 @@ class VectorStore:
             # First, store the document
             document_result = self.supabase.table('documents').insert({
                 'user_id': user_id,
-                'title': document_data['filename'],
+                'title': document_data.get('display_name', document_data['filename']),  # Use display_name as title
+                'display_name': document_data.get('display_name', document_data['filename']),
+                'description': document_data.get('description', ''),
                 'file_name': document_data['filename'],
                 'file_size': document_data.get('size_bytes', 0),
                 'file_type': document_data['file_type'].replace('.', ''),
@@ -74,7 +76,9 @@ class VectorStore:
                 'metadata': {
                     'character_count': document_data.get('character_count', 0),
                     'word_count': document_data.get('word_count', 0),
-                    'total_chunks': len(chunks_with_embeddings)
+                    'total_chunks': len(chunks_with_embeddings),
+                    'display_name': document_data.get('display_name', ''),
+                    'description': document_data.get('description', '')
                 }
             }).execute()
             
@@ -118,7 +122,9 @@ class VectorStore:
             document_result = self.supabase.table('documents').insert({
                 'user_id': admin_user_id,
                 'admin_user_id': admin_user_id,
-                'title': document_data['filename'],
+                'title': document_data.get('display_name', document_data['filename']),
+                'display_name': document_data.get('display_name', document_data['filename']),
+                'description': document_data.get('description', ''),
                 'file_name': document_data['filename'],
                 'file_size': document_data.get('size_bytes', 0),
                 'file_type': document_data['file_type'].replace('.', ''),
@@ -132,7 +138,9 @@ class VectorStore:
                     'word_count': document_data.get('word_count', 0),
                     'total_chunks': len(chunks_with_embeddings),
                     'admin_uploaded': True,
-                    'category': category
+                    'category': category,
+                    'display_name': document_data.get('display_name', ''),
+                    'description': document_data.get('description', '')
                 }
             }).execute()
             

@@ -60,7 +60,10 @@ const ChatInterface: React.FC = () => {
       if (selectedFiles.length > 0) {
         for (const file of selectedFiles) {
           try {
-            await appDispatch(uploadDocument(file)).unwrap();
+            // For chat uploads, use filename as display name and auto-generate description
+            const displayName = file.name.replace(/\.[^/.]+$/, '');
+            const description = `Document uploaded to chat session: ${file.name}`;
+            await appDispatch(uploadDocument({ file, displayName, description })).unwrap();
           } catch (error) {
             console.error('Failed to upload document:', error);
           }

@@ -127,6 +127,17 @@ const PromptTemplateList: React.FC<PromptTemplateListProps> = ({
     setTemplateToDelete(null);
   };
 
+  const handleRestoreTemplate = async (templateId: string) => {
+    try {
+      await ApiService.restorePromptTemplate(templateId);
+      alert('Prompt template restored successfully');
+      loadTemplates();
+    } catch (error) {
+      console.error('Error restoring template:', error);
+      alert('Failed to restore prompt template');
+    }
+  };
+
   const handleDuplicateTemplate = async (template: PromptTemplate) => {
     if (!template.id) return;
     
@@ -253,7 +264,7 @@ const PromptTemplateList: React.FC<PromptTemplateListProps> = ({
               key={template.id}
               className={`p-6 hover:bg-gray-50 transition-colors cursor-pointer ${
                 selectedTemplateId === template.id ? 'bg-blue-50 border-l-4 border-blue-500' : ''
-              }`}
+              } ${!template.is_active ? 'opacity-60 bg-gray-50' : ''}`}
               onClick={() => onSelectTemplate(template)}
             >
               <div className="flex items-start justify-between">
@@ -316,18 +327,33 @@ const PromptTemplateList: React.FC<PromptTemplateListProps> = ({
                     Copy
                   </button>
                   
-                  <button
-                    onClick={(e: React.MouseEvent) => {
-                      e.stopPropagation();
-                      if (template.id) {
-                        handleDeleteTemplate(template.id);
-                      }
-                    }}
-                    className="px-3 py-1 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded"
-                    title="Delete Template"
-                  >
-                    Delete
-                  </button>
+                  {template.is_active ? (
+                    <button
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        if (template.id) {
+                          handleDeleteTemplate(template.id);
+                        }
+                      }}
+                      className="px-3 py-1 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded"
+                      title="Delete Template"
+                    >
+                      Delete
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        if (template.id) {
+                          handleRestoreTemplate(template.id);
+                        }
+                      }}
+                      className="px-3 py-1 text-sm text-green-600 hover:text-green-700 hover:bg-green-50 rounded"
+                      title="Restore Template"
+                    >
+                      Restore
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

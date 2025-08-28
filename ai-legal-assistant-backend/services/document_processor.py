@@ -94,7 +94,8 @@ class DocumentProcessor:
             logger.error(f"Error extracting text from PDF: {str(e)}")
             raise Exception(f"Failed to extract text from PDF: {str(e)}")
 
-    async def process_document_full_pipeline(self, file: UploadFile, user_id: str) -> Dict:
+    async def process_document_full_pipeline(self, file: UploadFile, user_id: str, 
+                                        display_name: str = None, description: str = None) -> Dict:
         """Process document through full pipeline with proper file handling"""
         try:
             # ADD SUBSCRIPTION CHECKS BEFORE PROCESSING
@@ -124,6 +125,17 @@ class DocumentProcessor:
             # Process the upload first
             document_data = await self.process_upload(file)
             
+            # Add custom fields to document data (backward compatibility)
+            if display_name:
+                document_data['display_name'] = display_name
+            else:
+                document_data['display_name'] = document_data['filename']  # Fallback for backward compatibility
+                
+            if description:
+                document_data['description'] = description
+            else:
+                document_data['description'] = ''  # Empty string for backward compatibility
+            
             # Import services here to avoid circular imports
             from services.embedding_service import EmbeddingService
             from services.vector_store import VectorStore
@@ -139,7 +151,9 @@ class DocumentProcessor:
                 document_data['text_content'],
                 document_metadata={
                     'filename': document_data['filename'], 
-                    'file_type': document_data['file_type']
+                    'file_type': document_data['file_type'],
+                    'display_name': document_data['display_name'],
+                    'description': document_data['description']
                 }
             )
             
@@ -156,6 +170,8 @@ class DocumentProcessor:
             
             return {
                 "document_id": document_id,
+                "display_name": document_data["display_name"],
+                "description": document_data["description"],
                 "filename": document_data["filename"],
                 "file_type": document_data["file_type"],
                 "character_count": document_data["character_count"],
